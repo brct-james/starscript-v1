@@ -1,7 +1,7 @@
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use spacetraders::client::Client;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 struct MarketGoodSummary {
@@ -248,50 +248,57 @@ fn find_routes(
     ships_for_sale: Vec<spacetraders::shared::ShipForSale>,
     locs_info: HashMap<String, (String, String, i32, i32)>,
     mut goods: HashMap<String, Vec<MarketGoodSummary>>,
-) -> Vec<Route> {
+) -> () {
     let mut routes = Vec::<Route>::new();
     // Filter tradable goods by requiring at least one in-system pair buying/selling each good
     goods.retain(|_, v| (*v).len() >= 2);
-
+    let mut ship_models = HashSet::<String>::new();
     // Collect all start/end permutations for remaining goods
     for (goodname, good) in goods {
         for endpoint_pair in good.into_iter().permutations(2) {
-            if endpoint_pair[0].purchase_price_per_unit < endpoint_pair[1].sell_price_per_unit {
-                for ship in &ships_for_sale {
-                    let restricted = ship
-                        .restricted_goods
-                        .as_ref()
-                        .unwrap_or(&Vec::<::spacetraders::shared::Good>::new())
-                        .iter()
-                        .map(|&r| r.to_string())
-                        .collect::<Vec<String>>();
-                    if restricted.len() == 0 || restricted.contains(&goodname) {
-                        let new_route = Route::new(
-                            &goodname,
-                            ship,
-                            restricted,
-                            &locs_info[&endpoint_pair[0].location_symbol],
-                            &locs_info[&endpoint_pair[1].location_symbol],
-                            &endpoint_pair,
-                        );
-                        if new_route.financials.credits_per_time > minimum_profit_per_time {
-                            routes.push(new_route);
-                        }
+            for ship in &ships_for_sale {
+                ship_models.insert(ship.ship_type.to_string());
+                let restricted = ship
+                    .restricted_goods
+                    .as_ref()
+                    .unwrap_or(&Vec::<::spacetraders::shared::Good>::new())
+                    .iter()
+                    .map(|&r| r.to_string())
+                    .collect::<Vec<String>>();
+                if restricted.len() == 0 || restricted.contains(&goodname) {
+                    let new_route = Route::new(
+                        &goodname,
+                        ship,
+                        restricted,
+                        &locs_info[&endpoint_pair[0].location_symbol],
+                        &locs_info[&endpoint_pair[1].location_symbol],
+                        &endpoint_pair,
+                    );
+                    if new_route.financials.credits_per_time > minimum_profit_per_time {
+                        routes.push(new_route);
                     }
                 }
             }
         }
     }
 
-    // Rank routes by various criteria
+    // Rank routes by best w.r.t. credits/time
     let ranked_routes = rank_routes(routes);
 
-    match save_routes(&ranked_routes) {
-        Ok(_) => println!("Saved ranked_routes"),
-        Err(why) => println!("An error occured while saving ranked_routes: {}", why),
-    }
+    // Curate routes by best w.r.t. ship type in credits/time
+    let routes_curated = curate_routes(ranked_routes.clone(), Vec::from_iter(ship_models));
 
-    return ranked_routes;
+    // Get top routes regardless of ship type
+    let routes_top = filter_routes(ranked_routes.clone(), minimum_profit_per_time);
+
+    match save_routes("routes_curated.json".to_string(), routes_curated) {
+        Ok(_) => println!("Saved routes_curated"),
+        Err(why) => println!("An error occured while saving routes_curated: {}", why),
+    }
+    match save_routes("routes_top.json".to_string(), routes_top) {
+        Ok(_) => println!("Saved routes_top"),
+        Err(why) => println!("An error occured while saving routes_top: {}", why),
+    }
 }
 
 fn rank_routes(routes: Vec<Route>) -> Vec<Route> {
@@ -304,14 +311,36 @@ fn rank_routes(routes: Vec<Route>) -> Vec<Route> {
     return ranked_routes;
 }
 
-fn save_routes(routes: &Vec<Route>) -> Result<(), Box<dyn std::error::Error>> {
+fn curate_routes(routes: Vec<Route>, ship_models: Vec<String>) -> Vec<Route> {
+    let mut routes_curated = Vec::<Route>::new();
+    for ship_model in ship_models {
+        let ship_routes = routes
+            .iter()
+            .filter(|route| route.ship_info.model == ship_model)
+            .cloned()
+            .collect::<Vec<Route>>();
+        routes_curated.push(ship_routes[0].clone());
+    }
+    return routes_curated;
+}
+
+fn filter_routes(routes: Vec<Route>, minimum_profit_per_time: i32) -> Vec<Route> {
+    let filtered_routes = routes
+        .iter()
+        .filter(|route| route.financials.credits_per_time > minimum_profit_per_time)
+        .cloned()
+        .collect::<Vec<Route>>();
+    return filtered_routes;
+}
+
+fn save_routes(filename: String, routes: Vec<Route>) -> Result<(), Box<dyn std::error::Error>> {
     let f = std::fs::OpenOptions::new()
         .truncate(true)
         .write(true)
         .create(true)
-        .open("db.json")?;
+        .open(filename)?;
     // write to file with serde
-    serde_json::to_writer_pretty(f, routes)?;
+    serde_json::to_writer_pretty(f, &routes)?;
 
     Ok(())
 }
