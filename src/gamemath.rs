@@ -16,7 +16,7 @@ pub fn calculate_fuel_cost(distance: &f64, ship_type: &String, target_type: &Str
     }
     if target_type == "Planet" {
         match ship_type.as_str() {
-            "MK-MK-III" => fuel += 1,
+            "HM-MK-III" => fuel += 1,
             "GR-MK-II" => fuel += 3,
             "GR-MK-III" => fuel += 4,
             _ => fuel += 2,
@@ -24,3 +24,21 @@ pub fn calculate_fuel_cost(distance: &f64, ship_type: &String, target_type: &Str
     }
     return fuel;
 }
+
+// pub fn fuel_from_api_locations(distance: &f64, ship_type: &String, target_type: &String) -> i32 {
+//     let mut fuel: i32;
+//     if ship_type == "HM-MK-III" {
+//         fuel = ((distance / 10f64).round() as i32) + 1;
+//     } else {
+//         fuel = ((distance / 7.5f64).round() as i32) + 1;
+//     }
+//     if target_type == "Planet" {
+//         match ship_type.as_str() {
+//             "MK-MK-III" => fuel += 1,
+//             "GR-MK-II" => fuel += 3,
+//             "GR-MK-III" => fuel += 4,
+//             _ => fuel += 2,
+//         }
+//     }
+//     return fuel;
+// }

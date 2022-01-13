@@ -1,4 +1,4 @@
-use super::super::gamemath;
+use super::super::wayfinding::Way;
 use itertools::Itertools;
 use std::collections::{HashMap, HashSet};
 
@@ -26,22 +26,6 @@ pub struct RouteFinancials {
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Eq, Ord, PartialEq, PartialOrd)]
-pub struct RouteWayfinding {
-    pub start_symbol: String,
-    pub start_type: String,
-    pub start_x: i32,
-    pub start_y: i32,
-    pub end_symbol: String,
-    pub end_type: String,
-    pub end_x: i32,
-    pub end_y: i32,
-    pub distance: i32,
-    pub flight_time: i32,
-    pub fuel_cost_to_end: i32,
-    pub fuel_cost_to_start: i32,
-}
-
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Eq, Ord, PartialEq, PartialOrd)]
 pub struct RouteShipInfo {
     pub model: String,
     pub speed: i32,
@@ -55,7 +39,7 @@ pub struct Route {
     pub name: String,
     pub good: String,
     pub financials: RouteFinancials,
-    pub wayfinding: RouteWayfinding,
+    pub wayfinding: Way,
     pub ship_info: RouteShipInfo,
 }
 
@@ -77,25 +61,18 @@ impl Route {
         };
         let (start_symbol, start_type, start_x, start_y) = start;
         let (end_symbol, end_type, end_x, end_y) = end;
-        let distance = gamemath::distance_from_coords(start_x, start_y, end_x, end_y);
-        let flight_time = gamemath::calculate_flight_time(&3f64, &(ship.speed as f64), &distance);
-        let fuel_cost_to_end = gamemath::calculate_fuel_cost(&distance, &ship.ship_type, &end_type);
-        let fuel_cost_to_start =
-            gamemath::calculate_fuel_cost(&distance, &ship.ship_type, &start_type);
-        let wayfinding = RouteWayfinding {
-            start_symbol: start_symbol.to_string(),
-            start_type: start_type.to_string(),
-            start_x: *start_x,
-            start_y: *start_y,
-            end_symbol: end_symbol.to_string(),
-            end_type: end_type.to_string(),
-            end_x: *end_x,
-            end_y: *end_y,
-            distance: distance.round() as i32,
-            flight_time: flight_time.round() as i32,
-            fuel_cost_to_end: fuel_cost_to_end,
-            fuel_cost_to_start: fuel_cost_to_start,
-        };
+        let wayfinding = Way::new(
+            &start_symbol,
+            &start_type,
+            &start_x,
+            &start_y,
+            &end_symbol,
+            &end_type,
+            &end_x,
+            &end_y,
+            &ship.speed,
+            &ship.ship_type,
+        );
         let price_delta_per_unit =
             goods_summary[1].sell_price_per_unit - goods_summary[0].purchase_price_per_unit;
         let cargo_units_per_run = ship.max_cargo / goods_summary[0].volume_per_unit;
@@ -107,7 +84,8 @@ impl Route {
             volume_per_unit: goods_summary[0].volume_per_unit,
             cargo_units_per_run: cargo_units_per_run,
             credits_per_run: credits_per_run,
-            credits_per_time: (credits_per_run as f64 / flight_time).round() as i32,
+            credits_per_time: (credits_per_run as f64 / wayfinding.flight_time as f64).round()
+                as i32,
             quantity_at_start: goods_summary[0].quantity_available,
             quantity_at_end: goods_summary[1].quantity_available,
         };
