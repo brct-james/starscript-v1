@@ -3,6 +3,8 @@ use std::collections::HashMap;
 mod gamemath;
 mod traderoutes;
 use traderoutes::routes::{find_routes, MarketGoodSummary, Route};
+use traderoutes::steps::{generate_steps, StepSymbol};
+mod shipmanager;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -81,6 +83,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Score each based on $/time for each ship type (account for cargo size after fuel [and qty available], speed (flight time), price difference, and market share per run [dont want to be bringing 3000 to a station wanting 20 for ex])
 
     // Future: Find Potential Routes given a ship object, allowing dynamic retasking. Includes travel time to start of proposed route in ranking step, restricted cargo, fuel cost (and whether to fill up on both ends or just one)
+
+    let _steps = generate_steps(vec![
+        StepSymbol::BuyFuel,
+        StepSymbol::TravelStart,
+        StepSymbol::BuyFuel,
+        StepSymbol::BuyGoods,
+        StepSymbol::TravelEnd,
+        StepSymbol::SellGoods,
+        StepSymbol::FinishRoute,
+    ]);
+    println!(
+        "{}",
+        _steps
+            .iter()
+            .map(|a| a.step_name.to_string())
+            .collect::<std::string::String>()
+    );
+
+    
 
     Ok(())
     // spacetraders::client::claim_username(client, "Greenitthe".to_string());
