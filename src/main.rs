@@ -8,6 +8,8 @@ mod shipmanager;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    env_logger::init();
+
     let http_client = spacetraders::client::get_http_client(None);
     let client = Client::new(
         http_client,
@@ -76,7 +78,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Vec is top routes based on minimum_profit_per_time
     let route: (HashMap<String, Route>, Vec<Route>) =
         find_routes(50i32, ships_for_sale, locs_info, mkt_symbols);
-    println!("{}", serde_json::to_string_pretty(&route).unwrap());
 
     // Take top route, schedule ship to complete once
 
@@ -93,15 +94,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         StepSymbol::SellGoods,
         StepSymbol::FinishRoute,
     ]);
-    println!(
-        "{}",
-        _steps
-            .iter()
-            .map(|a| a.step_name.to_string())
-            .collect::<std::string::String>()
-    );
 
-    
+    let my_ships = client.get_my_ships().await?;
+    println!("{}", serde_json::to_string_pretty(&my_ships).unwrap());
 
     Ok(())
     // spacetraders::client::claim_username(client, "Greenitthe".to_string());
