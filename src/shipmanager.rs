@@ -1,4 +1,3 @@
-use super::traderoutes::steps::StepSymbol;
 use std::collections::HashMap;
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
@@ -61,22 +60,16 @@ impl ShipManager {
         return self;
     }
 
-    // pub fn add_ship_from_api(
-    //     &mut self,
-    //     ship: spacetraders::shared::Ship,
-    //     route: Option<String>,
-    //     step: Option<String>,
-    //     is_active: bool,
-    // ) -> &mut ShipManager {
-    //     self.add_ship(
-    //         ShipStatus::new(
-    //             None,
-    //             None,
-    //         ),
-    //         is_active,
-    //     );
-    //     return self;
-    // }
+    pub fn add_ship_from_api(
+        &mut self,
+        ship: spacetraders::shared::Ship,
+        route: Option<String>,
+        step: Option<usize>,
+        is_active: bool,
+    ) -> &mut ShipManager {
+        self.add_ship(ShipStatus::new(route, step, ship), is_active);
+        return self;
+    }
 
     pub fn load_ships_from_api(
         &mut self,
@@ -88,27 +81,27 @@ impl ShipManager {
         return self;
     }
 
-    // pub fn update_ships_from_api(
-    //     &mut self,
-    //     ships: Vec<spacetraders::shared::Ship>,
-    // ) -> &mut ShipManager {
-    //     for ship in ships {
-    //         match self.get_ship(&ship.id) {
-    //             Some((shipstate, shipstatus)) => match shipstate {
-    //                 ShipState::Active => {
-    //                     self.add_ship_from_api(ship, shipstatus.route, shipstatus.step, true);
-    //                 }
-    //                 ShipState::Inactive => {
-    //                     self.add_ship_from_api(ship, shipstatus.route, shipstatus.step, false);
-    //                 }
-    //             },
-    //             None => {
-    //                 self.add_new_ship_from_api(ship);
-    //             }
-    //         }
-    //     }
-    //     return self;
-    // }
+    pub fn update_ships_from_api(
+        &mut self,
+        ships: Vec<spacetraders::shared::Ship>,
+    ) -> &mut ShipManager {
+        for ship in ships {
+            match self.get_ship(&ship.id) {
+                Some((shipstate, shipstatus)) => match shipstate {
+                    ShipState::Active => {
+                        self.add_ship_from_api(ship, shipstatus.route, shipstatus.step, true);
+                    }
+                    ShipState::Inactive => {
+                        self.add_ship_from_api(ship, shipstatus.route, shipstatus.step, false);
+                    }
+                },
+                None => {
+                    self.add_new_ship_from_api(ship);
+                }
+            }
+        }
+        return self;
+    }
 
     pub fn activate_ship(&mut self, id: &String) -> &mut ShipManager {
         let localid = id.to_string();
@@ -137,7 +130,7 @@ impl ShipManager {
     //     return self;
     // }
 
-    pub fn update_ship_step(&mut self, id: &String, new_step: StepSymbol) -> &mut ShipManager {
+    pub fn update_ship_step(&mut self, id: &String, new_step: usize) -> &mut ShipManager {
         if self.active.contains_key(&id.to_string()) {
             self.active
                 .entry(id.to_string())
@@ -150,7 +143,7 @@ impl ShipManager {
         &mut self,
         id: &String,
         new_route: &String,
-        new_step: StepSymbol,
+        new_step: usize,
     ) -> &mut ShipManager {
         if self.inactive.contains_key(&id.to_string()) {
             self.inactive.entry(id.to_string()).and_modify(|e| {
@@ -161,14 +154,9 @@ impl ShipManager {
         return self;
     }
 
-    pub fn start_route(
-        &mut self,
-        id: &String,
-        route_name: &String,
-        first_step: StepSymbol,
-    ) -> &ShipManager {
+    pub fn start_route(&mut self, id: &String, route_name: &String) -> &ShipManager {
         return self
-            .update_ship_route_and_step(id, route_name, first_step)
+            .update_ship_route_and_step(id, route_name, 0usize)
             .activate_ship(id);
     }
 
@@ -215,14 +203,14 @@ impl ShipManager {
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 pub struct ShipStatus {
     pub route: Option<String>,
-    pub step: Option<StepSymbol>,
+    pub step: Option<usize>,
     pub ship: spacetraders::shared::Ship,
 }
 
 impl ShipStatus {
     pub fn new(
         route: Option<String>,
-        step: Option<StepSymbol>,
+        step: Option<usize>,
         ship: spacetraders::shared::Ship,
     ) -> ShipStatus {
         let ship = ShipStatus {
