@@ -1,7 +1,8 @@
 use spacetraders::client::Client;
 use std::{thread, time};
 
-use super::super::wayfinding::{StarAtlas, Way};
+use super::super::shared::StarShip;
+use super::super::wayfinding::{generate_way_from_ship_to_way_start, Leg, StarAtlas, Way};
 
 #[derive(
     strum_macros::Display,
@@ -16,7 +17,6 @@ use super::super::wayfinding::{StarAtlas, Way};
     Hash,
 )]
 pub enum StepSymbol {
-    BuyFuel,
     BuyGoods,
     SellGoods,
     TravelStart,
@@ -31,7 +31,7 @@ pub struct Step {
     pub next_step_symbol: StepSymbol,
     pub run: fn(
         client: &Client,
-        ship: &spacetraders::shared::Ship,
+        ship: &StarShip,
         staratlas: &StarAtlas,
         way: &Way,
         good: &String,
@@ -44,7 +44,7 @@ impl Step {
         next_step_symbol: StepSymbol,
         run_func: fn(
             client: &Client,
-            ship: &spacetraders::shared::Ship,
+            ship: &StarShip,
             staratlas: &StarAtlas,
             way: &Way,
             good: &String,
@@ -59,19 +59,16 @@ impl Step {
     }
 }
 
-#[tokio::main]
 async fn buy_fuel(
     client: &Client,
-    ship: &spacetraders::shared::Ship,
-    staratlas: &StarAtlas,
-    way: &Way,
-    good: &String,
+    ship: &StarShip,
+    leg: &Leg,
 ) -> Result<time::Duration, Box<dyn std::error::Error>> {
-    let _ = staratlas;
-    let _ = good;
-    let fuel_needed = way.fuel_cost_to_end;
+    let fuel_needed = leg.fuel_cost_to_end;
     let filtered_cargo = ship
         .cargo
+        .as_ref()
+        .unwrap()
         .iter()
         .filter(|g| g.good == spacetraders::shared::Good::Fuel)
         .collect::<Vec<&spacetraders::shared::Cargo>>();
@@ -83,43 +80,34 @@ async fn buy_fuel(
             return Ok(time::Duration::from_secs(1));
         }
     }
-
-    // let rt = tokio::runtime::Runtime::new().unwrap();
-    // match rt.block_on(async {
-    //     return client
-    //         .create_purchase_order(
-    //             ship.id.to_string(),
-    //             spacetraders::shared::Good::Fuel,
-    //             fuel_needed,
-    //         )
-    //         .await;
-    // }) {
-    //     Ok(purchase_order) => println!("PO Opened: {:#?}", purchase_order),
-    //     Err(why) => panic!("Error while buying fuel: {}", why),
-    // };
-    match client
-        .create_purchase_order(
-            ship.id.to_string(),
-            spacetraders::shared::Good::Fuel,
-            fuel_needed,
-        )
-        .await
-    {
-        Ok(purchase_order) => println!("PO Opened: {:#?}", purchase_order),
-        Err(why) => match why {
-            spacetraders::errors::SpaceTradersClientError::ApiError(e) => {
-                if e.error.code == 400i32 {
-                    // In transit - wait a few seconds
-                    thread::sleep(time::Duration::from_secs(5));
-                    println!("In Transit - Retrying Buy Fuel in 5s");
-                    return buy_fuel(client, ship, staratlas, way, good);
-                } else {
-                    panic!("ApiError while buying fuel: {}", e);
-                }
+    loop {
+        match client
+            .create_purchase_order(
+                ship.id.as_ref().unwrap().to_string(),
+                spacetraders::shared::Good::Fuel,
+                fuel_needed,
+            )
+            .await
+        {
+            Ok(_purchase_order) => {
+                // println!("PO Opened: {:#?}", purchase_order);
+                break;
             }
-            _ => panic!("Error while buying fuel: {}", why),
-        },
-    };
+            Err(why) => match why {
+                spacetraders::errors::SpaceTradersClientError::ApiError(e) => {
+                    if e.error.code == 400i32 {
+                        // In transit - wait a few seconds
+                        thread::sleep(time::Duration::from_secs(5));
+                        println!("In Transit - Retrying Buy Fuel");
+                    } else {
+                        panic!("ApiError while buying fuel: {}", e);
+                    }
+                }
+                _ => panic!("Error while buying fuel: {}", why),
+            },
+        };
+    }
+
     println!("BuyFuel");
     return Ok(time::Duration::from_secs(1));
 }
@@ -127,7 +115,7 @@ async fn buy_fuel(
 #[tokio::main]
 async fn buy_goods(
     client: &Client,
-    ship: &spacetraders::shared::Ship,
+    ship: &StarShip,
     staratlas: &StarAtlas,
     way: &Way,
     good: &String,
@@ -137,7 +125,7 @@ async fn buy_goods(
     let _ = staratlas;
     let _ = way;
     let _ = good;
-    let cargo_room = ship.space_available;
+    let cargo_room = ship.space_available.unwrap();
     let apigood = spacetraders::shared::Good::from(good.to_string());
     let units_to_buy = cargo_room / apigood.get_volume();
     if units_to_buy == 0 {
@@ -156,11 +144,11 @@ async fn buy_goods(
             return Ok(time::Duration::from_secs(1));
         }
         match client
-            .create_purchase_order(ship.id.to_string(), apigood, order)
+            .create_purchase_order(ship.id.as_ref().unwrap().to_string(), apigood, order)
             .await
         {
-            Ok(purchase_order) => {
-                println!("PO Opened: {:#?}", purchase_order);
+            Ok(_purchase_order) => {
+                // println!("PO Opened: {:#?}", purchase_order);
                 thread::sleep(time::Duration::from_millis(500)); // Wait half second to avoid ratelimit
             }
             Err(why) => match why {
@@ -184,7 +172,7 @@ async fn buy_goods(
 #[tokio::main]
 async fn sell_goods(
     client: &Client,
-    ship: &spacetraders::shared::Ship,
+    ship: &StarShip,
     staratlas: &StarAtlas,
     way: &Way,
     good: &String,
@@ -196,13 +184,15 @@ async fn sell_goods(
     let apigood = spacetraders::shared::Good::from(good.to_string());
     let mut units_to_sell = ship
         .cargo
+        .as_ref()
+        .unwrap()
         .iter()
         .filter(|g| g.good == apigood)
         .collect::<Vec<&spacetraders::shared::Cargo>>()[0]
         .quantity;
     println!("UNITS TO SELL {:#?}", units_to_sell);
-    if ship.ship_type == "TD-MK-I" {
-        units_to_sell -= way.fuel_cost_to_end + 1;
+    if ship.model == "TD-MK-I" {
+        units_to_sell -= way.total_fuel_cost_to_end + 1;
     }
     println!("UNITS TO SELL {:#?}", units_to_sell);
     if units_to_sell == 0 {
@@ -221,7 +211,7 @@ async fn sell_goods(
             return Ok(time::Duration::from_secs(1));
         }
         match client
-            .create_sell_order(ship.id.to_string(), apigood, order)
+            .create_sell_order(ship.id.as_ref().unwrap().to_string(), apigood, order)
             .await
         {
             Ok(sale_order) => {
@@ -246,10 +236,116 @@ async fn sell_goods(
     println!("SellGoods");
     return Ok(time::Duration::from_secs(1));
 }
+
+async fn travel(
+    client: &Client,
+    ship: &StarShip,
+    mut way: Way,
+) -> Result<time::Duration, Box<dyn std::error::Error>> {
+    let mut delay_time: u64 = 0;
+    loop {
+        let leg = way.legs[way.current_leg_index].clone();
+        println!("Travel: Leg: {} -> {}", leg.start_symbol, leg.end_symbol);
+        match buy_fuel(client, ship, &leg).await {
+            Ok(delay) => {
+                thread::sleep(delay);
+            }
+            Err(why) => panic!("An error occurred while buying fuel: {}", why),
+        };
+        if leg.start_symbol == leg.end_symbol {
+            // At start already, skip
+            println!("Travel Skipped - Already at destination");
+            // Increment Leg Index
+            way.incr_leg();
+            // Break if executed last leg
+            if way.current_leg_index == way.legs.len() {
+                break;
+            }
+            continue;
+        }
+        delay_time = leg.flight_time.clone() as u64 + 1u64;
+        if leg.is_warp {
+            match client
+                .attempt_warp_jump(ship.id.as_ref().unwrap().to_string())
+                .await
+            {
+                Ok(flight_plan) => {
+                    println!("WARP FP Opened: {:#?}", flight_plan);
+                    // Increment Leg Index
+                    way.incr_leg();
+                    // Sleep till FP should be done
+                    thread::sleep(time::Duration::from_secs(delay_time));
+                }
+                Err(why) => match why {
+                    spacetraders::errors::SpaceTradersClientError::ApiError(e) => {
+                        match e.error.code {
+                            3003i32 => {
+                                // Same dest as dept - should have handled this case already...
+                                println!("Same dest as dept: {}", e.error.code);
+                            }
+                            3002i32 => {
+                                // In transit on existing flight plan
+                                println!("In-Transit - Retrying Next Loop")
+                            }
+                            422i32 => {
+                                // In transit
+                                println!("In-Transit: Cant Warp - Retrying Next Loop")
+                            }
+                            _ => panic!("ApiError while traveling start: {}", e),
+                        }
+                    }
+                    _ => panic!("Error while traveling start: {}", why),
+                },
+            };
+        } else {
+            match client
+                .create_flight_plan(
+                    ship.id.as_ref().unwrap().to_string(),
+                    leg.end_symbol.to_string(),
+                )
+                .await
+            {
+                Ok(flight_plan) => {
+                    println!("FP Opened: {:#?}", flight_plan);
+                    // Increment Leg Index
+                    way.incr_leg();
+                    // Sleep till FP should be done
+                    thread::sleep(time::Duration::from_secs(delay_time));
+                }
+                Err(why) => match why {
+                    spacetraders::errors::SpaceTradersClientError::ApiError(e) => {
+                        match e.error.code {
+                            3003i32 => {
+                                // Same dest as dept - should have handled this case already...
+                                println!("Same dest as dept: {}", e.error.code);
+                            }
+                            3002i32 => {
+                                // In transit on existing flight plan
+                                println!("In-Transit - Retrying Next Loop")
+                            }
+                            422i32 => {
+                                // In transit
+                                println!("In-Transit: Cant Warp - Retrying Next Loop")
+                            }
+                            _ => panic!("ApiError while traveling start: {}", e),
+                        }
+                    }
+                    _ => panic!("Error while traveling start: {}", why),
+                },
+            };
+        }
+        // Break if executed last leg
+        if way.current_leg_index == way.legs.len() {
+            break;
+        }
+    }
+    return Ok(time::Duration::from_secs(delay_time));
+}
+
 #[tokio::main]
 async fn travel_start(
     client: &Client,
-    ship: &spacetraders::shared::Ship,
+    ship: &StarShip,
     staratlas: &StarAtlas,
     way: &Way,
     good: &String,
@@ -258,38 +354,25 @@ async fn travel_start(
     let _ = ship;
     let _ = staratlas;
     let _ = good;
-    println!("{} {}", way.start_symbol, way.end_symbol);
-    if way.start_symbol == way.end_symbol {
-        // At start already, skip
-        println!("TravelStart - Already at start");
-        return Ok(time::Duration::from_secs(1));
-    }
-    match client
-        .create_flight_plan(ship.id.to_string(), way.end_symbol.to_string())
-        .await
-    {
-        Ok(flight_plan) => println!("FP Opened: {:#?}", flight_plan),
-        Err(why) => match why {
-            spacetraders::errors::SpaceTradersClientError::ApiError(e) => {
-                if e.error.code == 3003i32 {
-                    // Same dest as dept
-                    println!("e: {}", e.error.code);
-                } else {
-                    panic!("ApiError while traveling start: {}", e);
-                }
-            }
-            _ => panic!("Error while traveling start: {}", why),
-        },
+    let way_to_start = generate_way_from_ship_to_way_start(&way, &ship, &staratlas);
+    println!(
+        "Travel Start: {} -> {}",
+        way_to_start.start_symbol, way_to_start.end_symbol
+    );
+
+    let delay_duration: time::Duration;
+    match travel(client, ship, way_to_start.clone()).await {
+        Ok(dt) => delay_duration = dt,
+        Err(why) => panic!("Err in travel: {}", why),
     };
-    let delay_time: u64 = way.flight_time.clone() as u64 + 1u64;
     println!("TravelStart");
-    return Ok(time::Duration::from_secs(delay_time));
+    return Ok(delay_duration);
 }
 
 #[tokio::main]
 async fn travel_end(
     client: &Client,
-    ship: &spacetraders::shared::Ship,
+    ship: &StarShip,
     staratlas: &StarAtlas,
     way: &Way,
     good: &String,
@@ -299,36 +382,18 @@ async fn travel_end(
     let _ = staratlas;
     let _ = way;
     let _ = good;
-    println!("{} {}", way.start_symbol, way.end_symbol);
-    if way.start_symbol == way.end_symbol {
-        // At start already, skip
-        println!("TravelEnd - Already at end");
-        return Ok(time::Duration::from_secs(1));
-    }
-    match client
-        .create_flight_plan(ship.id.to_string(), way.end_symbol.to_string())
-        .await
-    {
-        Ok(flight_plan) => println!("FP Opened: {:#?}", flight_plan),
-        Err(why) => match why {
-            spacetraders::errors::SpaceTradersClientError::ApiError(e) => {
-                if e.error.code == 3003i32 {
-                    // Same dest as dept
-                    println!("e: {}", e.error.code);
-                } else {
-                    panic!("ApiError while traveling start: {}", e);
-                }
-            }
-            _ => panic!("Error while traveling start: {}", why),
-        },
+    println!("Travel End: {} -> {}", way.start_symbol, way.end_symbol);
+    let delay_duration: time::Duration;
+    match travel(client, ship, way.clone()).await {
+        Ok(dt) => delay_duration = dt,
+        Err(why) => panic!("Err in travel: {}", why),
     };
-    let delay_time: u64 = way.flight_time.clone() as u64 + 1u64;
     println!("TravelEnd");
-    return Ok(time::Duration::from_secs(delay_time));
+    return Ok(delay_duration);
 }
 fn finish_route(
     client: &Client,
-    ship: &spacetraders::shared::Ship,
+    ship: &StarShip,
     staratlas: &StarAtlas,
     way: &Way,
     good: &String,
@@ -352,7 +417,6 @@ pub fn generate_steps(step_list: Vec<StepSymbol>) -> Vec<Step> {
             next_step = step_list[i + 1].clone();
         }
         match step {
-            StepSymbol::BuyFuel => steps.push(Step::new(StepSymbol::BuyFuel, next_step, buy_fuel)),
             StepSymbol::BuyGoods => {
                 steps.push(Step::new(StepSymbol::BuyGoods, next_step, buy_goods))
             }

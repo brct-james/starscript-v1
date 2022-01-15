@@ -7,20 +7,16 @@ use traderoutes::steps::{generate_steps, StepSymbol};
 mod shipmanager;
 mod wayfinding;
 use std::thread;
+mod shared;
+use shared::StarShip;
 
 #[tokio::main]
 async fn get_systems_stuff(
     client: &Client,
-) -> Result<
-    (
-        Vec<spacetraders::shared::ShipForSale>,
-        HashMap<String, (String, String, i32, i32)>,
-        HashMap<String, Vec<MarketGoodSummary>>,
-    ),
-    Box<dyn std::error::Error>,
-> {
+) -> Result<(Vec<StarShip>, HashMap<String, Vec<MarketGoodSummary>>), Box<dyn std::error::Error>> {
     let systems = client.get_systems_info().await?.systems;
     let oe_locs = &systems
+        .clone()
         .into_iter()
         .filter(|sys| sys.symbol == "OE".to_string())
         .collect::<Vec<spacetraders::shared::SystemsInfoData>>()[0]
@@ -29,28 +25,62 @@ async fn get_systems_stuff(
         .into_iter()
         .map(|loc| &loc.symbol)
         .collect::<Vec<&String>>();
+    let xv_locs = &systems
+        .clone()
+        .into_iter()
+        .filter(|sys| sys.symbol == "XV".to_string())
+        .collect::<Vec<spacetraders::shared::SystemsInfoData>>()[0]
+        .locations;
+    let xv_loc_symbols = xv_locs
+        .into_iter()
+        .map(|loc| &loc.symbol)
+        .collect::<Vec<&String>>();
+    let zy1_locs = &systems
+        .clone()
+        .into_iter()
+        .filter(|sys| sys.symbol == "ZY1".to_string())
+        .collect::<Vec<spacetraders::shared::SystemsInfoData>>()[0]
+        .locations;
+    let zy1_loc_symbols = zy1_locs
+        .into_iter()
+        .map(|loc| &loc.symbol)
+        .collect::<Vec<&String>>();
+    let na7_locs = &systems
+        .clone()
+        .into_iter()
+        .filter(|sys| sys.symbol == "NA7".to_string())
+        .collect::<Vec<spacetraders::shared::SystemsInfoData>>()[0]
+        .locations;
+    let na7_loc_symbols = na7_locs
+        .into_iter()
+        .map(|loc| &loc.symbol)
+        .collect::<Vec<&String>>();
 
-    let mut locs_info = HashMap::new();
-    for loc in oe_locs.iter() {
-        locs_info.insert(
-            loc.symbol.to_string(),
-            (
-                loc.symbol.to_string(),
-                loc.systems_info_type.to_string(),
-                loc.x,
-                loc.y,
-            ),
-        );
-    }
+    let ships_for_sale_system = "OE".to_string();
+    let locations_symbols = Vec::<&String>::new()
+        .into_iter()
+        .chain(oe_loc_symbols.into_iter())
+        .chain(xv_loc_symbols.into_iter())
+        .chain(zy1_loc_symbols.into_iter())
+        .chain(na7_loc_symbols.into_iter())
+        .collect::<Vec<&String>>();
 
     let mut mkt_symbols = HashMap::new();
     let mut mkts = HashMap::new();
-    let loc_vec = oe_loc_symbols;
+    let loc_vec = locations_symbols;
     for loc in loc_vec.iter() {
-        let mkt = client
-            .get_location_marketplace(&loc.to_string())
-            .await?
-            .marketplace;
+        let mkt: Vec<spacetraders::shared::MarketplaceData>;
+        match client.get_location_marketplace(&loc.to_string()).await {
+            Ok(locmktplc) => mkt = locmktplc.marketplace,
+            Err(why) => {
+                println!(
+                    "Failed to get marketplace for loc: {}, for reason: {}",
+                    loc.to_string(),
+                    why
+                );
+                continue;
+            }
+        };
 
         // Now append items to mkt_symbols
         for item in mkt.iter() {
@@ -71,8 +101,14 @@ async fn get_systems_stuff(
         // Lastly append mkt to hashmap
         mkts.insert(loc, mkt);
     }
-    let ships_for_sale = client.get_ships_for_sale(&"OE".to_string()).await?.ships;
-    return Ok((ships_for_sale, locs_info, mkt_symbols));
+    let ships_for_sale = client
+        .get_ships_for_sale(&ships_for_sale_system)
+        .await?
+        .ships
+        .iter()
+        .map(|s| StarShip::from(s.clone()))
+        .collect::<Vec<StarShip>>();
+    return Ok((ships_for_sale, mkt_symbols));
 }
 
 #[tokio::main]
@@ -83,45 +119,68 @@ async fn update_shipmanager_with_api(
     let my_ships = client.get_my_ships().await?;
     // println!("{}", serde_json::to_string_pretty(&my_ships).unwrap());
 
-    let _ = shipmanager.update_ships_from_api(my_ships.ships);
+    let _ = shipmanager.update_ships_from_api(
+        my_ships
+            .ships
+            .iter()
+            .map(|s| StarShip::from(s.clone()))
+            .collect::<Vec<StarShip>>(),
+    );
 
     return Ok(shipmanager);
 }
 
 #[tokio::main]
-async fn setup_staratlas(
+async fn load_shipmanager(
     client: &Client,
-    curated_routes: &HashMap<String, Route>,
-) -> Result<
-    (
-        shipmanager::ShipManager,
-        Route,
-        shipmanager::ShipStatus,
-        wayfinding::StarAtlas,
-    ),
-    Box<dyn std::error::Error>,
-> {
+    curated_routes: HashMap<String, Route>,
+) -> Result<(shipmanager::ShipManager, Route, shipmanager::ShipStatus), Box<dyn std::error::Error>>
+{
     let my_ships = client.get_my_ships().await?;
     // println!("{}", serde_json::to_string_pretty(&my_ships).unwrap());
 
     let mut shipmanager = shipmanager::ShipManager::new();
-    let _ = shipmanager.load_ships_from_api(my_ships.ships);
+    let _ = shipmanager.load_ships_from_api(
+        my_ships
+            .ships
+            .iter()
+            .map(|s| StarShip::from(s.clone()))
+            .collect::<Vec<StarShip>>(),
+    );
 
     let (_, tanker) = shipmanager
         .get_ship(&"ckyabccit124512315s6e0js9gn8".to_string())
         .unwrap();
     // println!("{}", serde_json::to_string_pretty(&tanker).unwrap());
-    let tanker_route = curated_routes[&tanker.ship.ship_type].clone();
-    // println!("{}", serde_json::to_string_pretty(&tanker_route).unwrap());
-    shipmanager.start_route(&tanker.ship.id, &tanker_route.name);
+    let tanker_route = curated_routes[&tanker.ship.model].clone();
+    println!("{}", serde_json::to_string_pretty(&tanker_route).unwrap());
+    shipmanager.start_route(&tanker.ship.id.unwrap(), &tanker_route.name);
     let (_, tanker) = shipmanager
         .get_ship(&"ckyabccit124512315s6e0js9gn8".to_string())
         .unwrap();
     // println!("{}", serde_json::to_string_pretty(&tanker).unwrap());
+    return Ok((shipmanager, tanker_route, tanker));
+}
 
+#[tokio::main]
+async fn setup_staratlas(
+    client: &Client,
+) -> Result<wayfinding::StarAtlas, Box<dyn std::error::Error>> {
     let mut staratlas = wayfinding::StarAtlas::new();
     let oe_system_locations = client
         .get_locations_in_system("OE".to_string())
+        .await?
+        .locations;
+    let xv_system_locations = client
+        .get_locations_in_system("XV".to_string())
+        .await?
+        .locations;
+    let zy1_system_locations = client
+        .get_locations_in_system("ZY1".to_string())
+        .await?
+        .locations;
+    let na7_system_locations = client
+        .get_locations_in_system("NA7".to_string())
         .await?
         .locations;
     staratlas.add_system(
@@ -129,8 +188,22 @@ async fn setup_staratlas(
         "Omicron Eridani".to_string(),
         oe_system_locations,
     );
-    // println!("{}", serde_json::to_string_pretty(&staratlas).unwrap());
-    return Ok((shipmanager, tanker_route, tanker, staratlas));
+    staratlas.add_system("XV".to_string(), "Xiav".to_string(), xv_system_locations);
+    staratlas.add_system(
+        "ZY1".to_string(),
+        "Zeon Y1".to_string(),
+        zy1_system_locations,
+    );
+    staratlas.add_system(
+        "NA7".to_string(),
+        "Niri A7".to_string(),
+        na7_system_locations,
+    );
+    // println!(
+    //     "staratlas: {}",
+    //     serde_json::to_string_pretty(&staratlas).unwrap()
+    // );
+    return Ok(staratlas);
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -145,31 +218,36 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "4be25691-9594-4595-8344-ae3078b4b9fa".to_string(),
         );
 
-        let (ships_for_sale, locs_info, mkt_symbols);
+        let (ships_for_sale, mkt_symbols);
         match get_systems_stuff(&client) {
-            Ok((res1, res2, res3)) => {
+            Ok((res1, res2)) => {
                 ships_for_sale = res1;
-                locs_info = res2;
-                mkt_symbols = res3
+                mkt_symbols = res2;
             }
             Err(why) => panic!("Error getting systems stuff: {}", why),
         };
 
         let steps = generate_steps(vec![
-            StepSymbol::BuyFuel,
             StepSymbol::TravelStart,
-            StepSymbol::BuyFuel,
             StepSymbol::BuyGoods,
             StepSymbol::TravelEnd,
             StepSymbol::SellGoods,
             StepSymbol::FinishRoute,
         ]);
 
+        let staratlas;
+        match setup_staratlas(&client) {
+            Ok(res1) => {
+                staratlas = res1;
+            }
+            Err(why) => panic!("Error in setup_staratlas: {}", why),
+        };
+
         // Find Potential Routes
         // HashMap is curated routes where ship_type is key
         // Vec is top routes based on minimum_profit_per_time
         let (curated_routes, _top_routes) =
-            find_routes(50i32, ships_for_sale, locs_info, mkt_symbols);
+            find_routes(50i32, ships_for_sale, mkt_symbols, &staratlas);
 
         // Take top route, schedule ship to complete once
 
@@ -177,16 +255,184 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // Future: Find Potential Routes given a ship object, allowing dynamic retasking. Includes travel time to start of proposed route in ranking step, restricted cargo, fuel cost (and whether to fill up on both ends or just one)
 
-        let (shipmanager, tanker_route, tanker, staratlas);
-        match setup_staratlas(&client, &curated_routes) {
-            Ok((res1, res2, res3, res4)) => {
+        let (shipmanager, tanker_route, tanker);
+        match load_shipmanager(&client, curated_routes) {
+            Ok((res1, res2, res3)) => {
                 shipmanager = res1;
                 tanker_route = res2;
                 tanker = res3;
-                staratlas = res4;
             }
-            Err(why) => panic!("Error getting systems stuff: {}", why),
+            Err(why) => panic!("Error in load_shipmanager: {}", why),
         };
+
+        // println!("Test generate_way_from_symbols:");
+        // let suite = vec![
+        //     (
+        //         "OE-PM".to_string(),
+        //         "NA7-TH".to_string(),
+        //         [
+        //             "OE-PM -> OE-W-XV",
+        //             "OE-W-XV -> XV-W-OE",
+        //             "XV-W-OE -> XV-W-ZY1",
+        //             "XV-W-ZY1 -> ZY1-W-XV",
+        //             "ZY1-W-XV -> ZY1-W-NA7",
+        //             "ZY1-W-NA7 -> NA7-W-ZY1",
+        //             "NA7-W-ZY1 -> NA7-TH",
+        //         ]
+        //         .iter()
+        //         .map(|s| s.to_string())
+        //         .collect(),
+        //     ),
+        //     (
+        //         "OE-W-XV".to_string(),
+        //         "NA7-TH".to_string(),
+        //         [
+        //             "OE-W-XV -> XV-W-OE",
+        //             "XV-W-OE -> XV-W-ZY1",
+        //             "XV-W-ZY1 -> ZY1-W-XV",
+        //             "ZY1-W-XV -> ZY1-W-NA7",
+        //             "ZY1-W-NA7 -> NA7-W-ZY1",
+        //             "NA7-W-ZY1 -> NA7-TH",
+        //         ]
+        //         .iter()
+        //         .map(|s| s.to_string())
+        //         .collect(),
+        //     ),
+        //     (
+        //         "OE-PM".to_string(),
+        //         "NA7-W-ZY1".to_string(),
+        //         [
+        //             "OE-PM -> OE-W-XV",
+        //             "OE-W-XV -> XV-W-OE",
+        //             "XV-W-OE -> XV-W-ZY1",
+        //             "XV-W-ZY1 -> ZY1-W-XV",
+        //             "ZY1-W-XV -> ZY1-W-NA7",
+        //             "ZY1-W-NA7 -> NA7-W-ZY1",
+        //         ]
+        //         .iter()
+        //         .map(|s| s.to_string())
+        //         .collect(),
+        //     ),
+        //     (
+        //         "OE-W-XV".to_string(),
+        //         "NA7-W-ZY1".to_string(),
+        //         [
+        //             "OE-W-XV -> XV-W-OE",
+        //             "XV-W-OE -> XV-W-ZY1",
+        //             "XV-W-ZY1 -> ZY1-W-XV",
+        //             "ZY1-W-XV -> ZY1-W-NA7",
+        //             "ZY1-W-NA7 -> NA7-W-ZY1",
+        //         ]
+        //         .iter()
+        //         .map(|s| s.to_string())
+        //         .collect(),
+        //     ),
+        //     (
+        //         "NA7-TH".to_string(),
+        //         "OE-PM".to_string(),
+        //         [
+        //             "NA7-TH -> NA7-W-ZY1",
+        //             "NA7-W-ZY1 -> ZY1-W-NA7",
+        //             "ZY1-W-NA7 -> ZY1-W-XV",
+        //             "ZY1-W-XV -> XV-W-ZY1",
+        //             "XV-W-ZY1 -> XV-W-OE",
+        //             "XV-W-OE -> OE-W-XV",
+        //             "OE-W-XV -> OE-PM",
+        //         ]
+        //         .iter()
+        //         .map(|s| s.to_string())
+        //         .collect(),
+        //     ),
+        //     (
+        //         "NA7-W-ZY1".to_string(),
+        //         "OE-PM".to_string(),
+        //         [
+        //             "NA7-W-ZY1 -> ZY1-W-NA7",
+        //             "ZY1-W-NA7 -> ZY1-W-XV",
+        //             "ZY1-W-XV -> XV-W-ZY1",
+        //             "XV-W-ZY1 -> XV-W-OE",
+        //             "XV-W-OE -> OE-W-XV",
+        //             "OE-W-XV -> OE-PM",
+        //         ]
+        //         .iter()
+        //         .map(|s| s.to_string())
+        //         .collect(),
+        //     ),
+        //     (
+        //         "NA7-TH".to_string(),
+        //         "OE-W-XV".to_string(),
+        //         [
+        //             "NA7-TH -> NA7-W-ZY1",
+        //             "NA7-W-ZY1 -> ZY1-W-NA7",
+        //             "ZY1-W-NA7 -> ZY1-W-XV",
+        //             "ZY1-W-XV -> XV-W-ZY1",
+        //             "XV-W-ZY1 -> XV-W-OE",
+        //             "XV-W-OE -> OE-W-XV",
+        //         ]
+        //         .iter()
+        //         .map(|s| s.to_string())
+        //         .collect(),
+        //     ),
+        //     (
+        //         "NA7-W-ZY1".to_string(),
+        //         "OE-W-XV".to_string(),
+        //         [
+        //             "NA7-W-ZY1 -> ZY1-W-NA7",
+        //             "ZY1-W-NA7 -> ZY1-W-XV",
+        //             "ZY1-W-XV -> XV-W-ZY1",
+        //             "XV-W-ZY1 -> XV-W-OE",
+        //             "XV-W-OE -> OE-W-XV",
+        //         ]
+        //         .iter()
+        //         .map(|s| s.to_string())
+        //         .collect(),
+        //     ),
+        //     (
+        //         "XV-W-OE".to_string(),
+        //         "OE-PM-TR".to_string(),
+        //         ["XV-W-OE -> OE-W-XV", "OE-W-XV -> OE-PM-TR"]
+        //             .iter()
+        //             .map(|s| s.to_string())
+        //             .collect(),
+        //     ),
+        //     (
+        //         "XV-W-OE".to_string(),
+        //         "ZY1-W-XV".to_string(),
+        //         ["XV-W-OE -> XV-W-ZY1", "XV-W-ZY1 -> ZY1-W-XV"]
+        //             .iter()
+        //             .map(|s| s.to_string())
+        //             .collect(),
+        //     ),
+        //     (
+        //         "OE-W-XV".to_string(),
+        //         "XV-W-OE".to_string(),
+        //         ["OE-W-XV -> XV-W-OE"]
+        //             .iter()
+        //             .map(|s| s.to_string())
+        //             .collect(),
+        //     ),
+        //     (
+        //         "OE-W-XV".to_string(),
+        //         "OE-PM-TR".to_string(),
+        //         ["OE-W-XV -> OE-PM-TR"]
+        //             .iter()
+        //             .map(|s| s.to_string())
+        //             .collect(),
+        //     ),
+        // ];
+        // let test_results = test_generate_way_from_symbols(
+        //     &suite,
+        //     &StarShip::from(tanker.ship.clone()),
+        //     &staratlas.clone(),
+        // );
+        // println!("Test generate_way_from_symbols results:");
+        // for (index, (pass, result)) in test_results.iter().enumerate() {
+        //     let (test_start_loc, test_end_loc, _) = suite[index].clone();
+        //     println!(
+        //         "{} : {} -> {} | {}: {:?}",
+        //         index, test_start_loc, test_end_loc, pass, result
+        //     );
+        // }
 
         if tanker_route.financials.credits_per_time <= 40 {
             println!(
@@ -207,6 +453,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // spacetraders::client::claim_username(client, "Greenitthe".to_string());
 }
 
+fn _test_generate_way_from_symbols(
+    suite: &Vec<(String, String, Vec<String>)>,
+    starship: &StarShip,
+    staratlas: &wayfinding::StarAtlas,
+) -> Vec<(bool, Vec<String>)> {
+    let mut results = Vec::<(bool, Vec<String>)>::new();
+    for (start, end, assertion) in suite {
+        let way = wayfinding::generate_way_from_symbols(start, end, starship, staratlas);
+        let result = way
+            .legs
+            .iter()
+            .map(|l| format!("{} -> {}", l.start_symbol, l.end_symbol))
+            .collect::<Vec<String>>();
+        results.push((result == *assertion, result));
+    }
+    return results;
+}
+
 fn temp_tanker_loop(
     tanker_route: Route,
     tanker: shipmanager::ShipStatus,
@@ -215,13 +479,13 @@ fn temp_tanker_loop(
     client: Client,
     mut shipmanager: shipmanager::ShipManager,
 ) {
-    // BuyFuel
+    // Start Route
     loop {
         match update_shipmanager_with_api(&client, shipmanager) {
             Ok(sm) => shipmanager = sm,
             Err(why) => panic!("Error updating shipmanager: {}", why),
         };
-        shipmanager.update_ship_step(&tanker.ship.id.to_string(), 0);
+        shipmanager.update_ship_step(&tanker.ship.id.as_ref().unwrap().to_string(), 0);
         let (_, tanker) = shipmanager
             .get_ship(&"ckyabccit124512315s6e0js9gn8".to_string())
             .unwrap();
@@ -232,200 +496,35 @@ fn temp_tanker_loop(
             println!("Tanker traveling, waiting to start route");
         }
     }
-    match update_shipmanager_with_api(&client, shipmanager) {
-        Ok(sm) => shipmanager = sm,
-        Err(why) => panic!("Error updating shipmanager: {}", why),
-    };
-    shipmanager.update_ship_step(&tanker.ship.id.to_string(), 0);
-    let (_, tanker) = shipmanager
-        .get_ship(&"ckyabccit124512315s6e0js9gn8".to_string())
-        .unwrap();
-    let way_to_start = wayfinding::generate_way_to_route_start(
-        &tanker_route,
-        &tanker.ship.location.as_ref().unwrap().to_string(),
-        &tanker.ship,
-        &staratlas,
-    );
-    // println!("{}", serde_json::to_string_pretty(&way_to_start).unwrap());
 
-    // tokio::task::spawn(async move {
-    //     match (steps[&StepSymbol::BuyFuel].run)(
-    //         &client.clone(),
-    //         &tanker.ship.clone(),
-    //         &staratlas.clone(),
-    //         &way_to_start.clone(),
-    //     ) {
-    //         Ok(_) => println!("Ran BuyFuel"),
-    //         Err(why) => println!("An error occured while buying fuel: {}", why),
-    //     }
-    // });
-    match (steps[tanker.step.clone().unwrap()].run)(
-        &client.clone(),
-        &tanker.ship.clone(),
-        &staratlas.clone(),
-        &way_to_start.clone(),
-        &tanker_route.good.clone(),
-    ) {
-        Ok(delay) => {
-            thread::sleep(delay);
-            // println!("Cool fuel");
+    // Run Route
+    loop {
+        match update_shipmanager_with_api(&client, shipmanager) {
+            Ok(sm) => shipmanager = sm,
+            Err(why) => panic!("Error updating shipmanager: {}", why),
+        };
+        let (_, tanker) = shipmanager
+            .get_ship(&"ckyabccit124512315s6e0js9gn8".to_string())
+            .unwrap();
+        match (steps[tanker.step.clone().unwrap()].run)(
+            &client.clone(),
+            &tanker.ship.clone(),
+            &staratlas.clone(),
+            &tanker_route.wayfinding.clone(),
+            &tanker_route.good.clone(),
+        ) {
+            Ok(delay) => {
+                thread::sleep(delay);
+                // println!("Pushing back");
+            }
+            Err(why) => panic!("An error occured while flying start: {}", why),
+        };
+
+        // Increment Ship Step
+        shipmanager.incr_ship_step(&tanker.ship.id.as_ref().unwrap().to_string());
+        if tanker.step.clone().unwrap() == steps.len() - 1 {
+            // Out of Steps, Route Complete
+            break;
         }
-        Err(why) => panic!("An error occured while buying fuel: {}", why),
-    };
-
-    // FlyStart
-    match update_shipmanager_with_api(&client, shipmanager) {
-        Ok(sm) => shipmanager = sm,
-        Err(why) => panic!("Error updating shipmanager: {}", why),
-    };
-    shipmanager.update_ship_step(
-        &tanker.ship.id.to_string(),
-        tanker.step.clone().unwrap() + 1,
-    );
-    let (_, tanker) = shipmanager
-        .get_ship(&"ckyabccit124512315s6e0js9gn8".to_string())
-        .unwrap();
-    match (steps[tanker.step.clone().unwrap()].run)(
-        &client.clone(),
-        &tanker.ship.clone(),
-        &staratlas.clone(),
-        &way_to_start.clone(),
-        &tanker_route.good.clone(),
-    ) {
-        Ok(delay) => {
-            thread::sleep(delay);
-            // println!("Pushing back");
-        }
-        Err(why) => panic!("An error occured while flying start: {}", why),
-    };
-
-    // BuyFuel
-    match update_shipmanager_with_api(&client, shipmanager) {
-        Ok(sm) => shipmanager = sm,
-        Err(why) => panic!("Error updating shipmanager: {}", why),
-    };
-    shipmanager.update_ship_step(
-        &tanker.ship.id.to_string(),
-        tanker.step.clone().unwrap() + 1,
-    );
-    let (_, tanker) = shipmanager
-        .get_ship(&"ckyabccit124512315s6e0js9gn8".to_string())
-        .unwrap();
-    match (steps[tanker.step.clone().unwrap()].run)(
-        &client.clone(),
-        &tanker.ship.clone(),
-        &staratlas.clone(),
-        &tanker_route.wayfinding.clone(),
-        &tanker_route.good.clone(),
-    ) {
-        Ok(delay) => {
-            thread::sleep(delay);
-            // println!("Refueling");
-        }
-        Err(why) => panic!("An error occured while buying fuel: {}", why),
-    };
-
-    // BuyGoods
-    match update_shipmanager_with_api(&client, shipmanager) {
-        Ok(sm) => shipmanager = sm,
-        Err(why) => panic!("Error updating shipmanager: {}", why),
-    };
-    shipmanager.update_ship_step(
-        &tanker.ship.id.to_string(),
-        tanker.step.clone().unwrap() + 1,
-    );
-    let (_, tanker) = shipmanager
-        .get_ship(&"ckyabccit124512315s6e0js9gn8".to_string())
-        .unwrap();
-    match (steps[tanker.step.clone().unwrap()].run)(
-        &client.clone(),
-        &tanker.ship.clone(),
-        &staratlas.clone(),
-        &tanker_route.wayfinding.clone(),
-        &tanker_route.good.clone(),
-    ) {
-        Ok(delay) => {
-            thread::sleep(delay);
-            // println!("Bought Goods");
-        }
-        Err(why) => panic!("An error occured while buying goods: {}", why),
-    };
-
-    // TravelEnd
-    match update_shipmanager_with_api(&client, shipmanager) {
-        Ok(sm) => shipmanager = sm,
-        Err(why) => panic!("Error updating shipmanager: {}", why),
-    };
-    shipmanager.update_ship_step(
-        &tanker.ship.id.to_string(),
-        tanker.step.clone().unwrap() + 1,
-    );
-    let (_, tanker) = shipmanager
-        .get_ship(&"ckyabccit124512315s6e0js9gn8".to_string())
-        .unwrap();
-    match (steps[tanker.step.clone().unwrap()].run)(
-        &client.clone(),
-        &tanker.ship.clone(),
-        &staratlas.clone(),
-        &tanker_route.wayfinding.clone(),
-        &tanker_route.good.clone(),
-    ) {
-        Ok(delay) => {
-            thread::sleep(delay);
-            // println!("TravelingEnd");
-        }
-        Err(why) => panic!("An error occured while traveling end: {}", why),
-    };
-
-    // SellGoods
-    match update_shipmanager_with_api(&client, shipmanager) {
-        Ok(sm) => shipmanager = sm,
-        Err(why) => panic!("Error updating shipmanager: {}", why),
-    };
-    shipmanager.update_ship_step(
-        &tanker.ship.id.to_string(),
-        tanker.step.clone().unwrap() + 1,
-    );
-    let (_, tanker) = shipmanager
-        .get_ship(&"ckyabccit124512315s6e0js9gn8".to_string())
-        .unwrap();
-    match (steps[tanker.step.clone().unwrap()].run)(
-        &client.clone(),
-        &tanker.ship.clone(),
-        &staratlas.clone(),
-        &tanker_route.wayfinding.clone(),
-        &tanker_route.good.clone(),
-    ) {
-        Ok(delay) => {
-            thread::sleep(delay);
-            // println!("Selling Goods");
-        }
-        Err(why) => panic!("An error occured while selling goods: {}", why),
-    };
-
-    // FinishRoute
-    // match update_shipmanager_with_api(&client, shipmanager) {
-    //     Ok(sm) => shipmanager = sm,
-    //     Err(why) => panic!("Error updating shipmanager: {}", why),
-    // };
-    // shipmanager.update_ship_step(
-    //     &tanker.ship.id.to_string(),
-    //     tanker.step.clone().unwrap() + 1,
-    // );
-    // let (_, tanker) = shipmanager
-    //     .get_ship(&"ckyabccit124512315s6e0js9gn8".to_string())
-    //     .unwrap();
-    // match (steps[tanker.step.clone().unwrap()].run)(
-    //     &client.clone(),
-    //     &tanker.ship.clone(),
-    //     &staratlas.clone(),
-    //     &tanker_route.wayfinding.clone(),
-    //     &tanker_route.good.clone(),
-    // ) {
-    //     Ok(delay) => {
-    //         thread::sleep(delay);
-    //         println!("Finished Route");
-    //     }
-    //     Err(why) => panic!("An error occured while finishing route: {}", why),
-    // };
+    }
 }

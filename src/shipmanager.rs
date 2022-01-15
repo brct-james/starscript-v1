@@ -1,3 +1,4 @@
+use super::shared::StarShip;
 use std::collections::HashMap;
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
@@ -46,23 +47,27 @@ impl ShipManager {
 
     pub fn add_ship(&mut self, ship_status: ShipStatus, is_active: bool) -> &mut ShipManager {
         if is_active {
-            self.active
-                .insert(ship_status.ship.id.to_string(), ship_status);
+            self.active.insert(
+                ship_status.ship.id.as_ref().unwrap().to_string(),
+                ship_status,
+            );
         } else {
-            self.inactive
-                .insert(ship_status.ship.id.to_string(), ship_status);
+            self.inactive.insert(
+                ship_status.ship.id.as_ref().unwrap().to_string(),
+                ship_status,
+            );
         }
         return self;
     }
 
-    pub fn add_new_ship_from_api(&mut self, ship: spacetraders::shared::Ship) -> &mut ShipManager {
+    pub fn add_new_ship_from_api(&mut self, ship: StarShip) -> &mut ShipManager {
         self.add_ship(ShipStatus::new(None, None, ship.clone()), false);
         return self;
     }
 
     pub fn add_ship_from_api(
         &mut self,
-        ship: spacetraders::shared::Ship,
+        ship: StarShip,
         route: Option<String>,
         step: Option<usize>,
         is_active: bool,
@@ -71,22 +76,16 @@ impl ShipManager {
         return self;
     }
 
-    pub fn load_ships_from_api(
-        &mut self,
-        ships: Vec<spacetraders::shared::Ship>,
-    ) -> &mut ShipManager {
+    pub fn load_ships_from_api(&mut self, ships: Vec<StarShip>) -> &mut ShipManager {
         for ship in ships {
             self.add_new_ship_from_api(ship);
         }
         return self;
     }
 
-    pub fn update_ships_from_api(
-        &mut self,
-        ships: Vec<spacetraders::shared::Ship>,
-    ) -> &mut ShipManager {
+    pub fn update_ships_from_api(&mut self, ships: Vec<StarShip>) -> &mut ShipManager {
         for ship in ships {
-            match self.get_ship(&ship.id) {
+            match self.get_ship(&(ship.id.as_ref().unwrap())) {
                 Some((shipstate, shipstatus)) => match shipstate {
                     ShipState::Active => {
                         self.add_ship_from_api(ship, shipstatus.route, shipstatus.step, true);
@@ -135,6 +134,14 @@ impl ShipManager {
             self.active
                 .entry(id.to_string())
                 .and_modify(|e| e.step = Some(new_step));
+        }
+        return self;
+    }
+    pub fn incr_ship_step(&mut self, id: &String) -> &mut ShipManager {
+        if self.active.contains_key(&id.to_string()) {
+            self.active
+                .entry(id.to_string())
+                .and_modify(|e| e.step = Some(e.step.unwrap() + 1));
         }
         return self;
     }
@@ -204,15 +211,11 @@ impl ShipManager {
 pub struct ShipStatus {
     pub route: Option<String>,
     pub step: Option<usize>,
-    pub ship: spacetraders::shared::Ship,
+    pub ship: StarShip,
 }
 
 impl ShipStatus {
-    pub fn new(
-        route: Option<String>,
-        step: Option<usize>,
-        ship: spacetraders::shared::Ship,
-    ) -> ShipStatus {
+    pub fn new(route: Option<String>, step: Option<usize>, ship: StarShip) -> ShipStatus {
         let ship = ShipStatus {
             route: route,
             step: step,

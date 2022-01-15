@@ -1,4 +1,5 @@
-use super::super::wayfinding::Way;
+use super::super::shared::StarShip;
+use super::super::wayfinding::{generate_way_from_symbols, StarAtlas, Way};
 use itertools::Itertools;
 use std::collections::{HashMap, HashSet};
 
@@ -46,33 +47,21 @@ pub struct Route {
 impl Route {
     pub fn new(
         good: &String,
-        ship: &spacetraders::shared::ShipForSale,
+        ship: &StarShip,
         restricted_goods_string: Vec<String>,
-        start: &(String, String, i32, i32),
-        end: &(String, String, i32, i32),
+        start_symbol: &String,
+        end_symbol: &String,
         goods_summary: &Vec<MarketGoodSummary>,
+        staratlas: StarAtlas,
     ) -> Route {
         let ship_info = RouteShipInfo {
-            model: ship.ship_type.clone(),
+            model: ship.model.clone(),
             speed: ship.speed.clone(),
             load_speed: ship.loading_speed.clone(),
             cargo_size: ship.max_cargo,
             cargo_restrictions: restricted_goods_string,
         };
-        let (start_symbol, start_type, start_x, start_y) = start;
-        let (end_symbol, end_type, end_x, end_y) = end;
-        let wayfinding = Way::new(
-            &start_symbol,
-            &start_type,
-            &start_x,
-            &start_y,
-            &end_symbol,
-            &end_type,
-            &end_x,
-            &end_y,
-            &ship.speed,
-            &ship.ship_type,
-        );
+        let wayfinding = generate_way_from_symbols(&start_symbol, &end_symbol, &ship, &staratlas);
         let price_delta_per_unit =
             goods_summary[1].sell_price_per_unit - goods_summary[0].purchase_price_per_unit;
         let cargo_units_per_run = ship.max_cargo / goods_summary[0].volume_per_unit;
@@ -84,7 +73,7 @@ impl Route {
             volume_per_unit: goods_summary[0].volume_per_unit,
             cargo_units_per_run: cargo_units_per_run,
             credits_per_run: credits_per_run,
-            credits_per_time: (credits_per_run as f64 / wayfinding.flight_time as f64).round()
+            credits_per_time: (credits_per_run as f64 / wayfinding.total_flight_time as f64).round()
                 as i32,
             quantity_at_start: goods_summary[0].quantity_available,
             quantity_at_end: goods_summary[1].quantity_available,
@@ -94,7 +83,7 @@ impl Route {
             good.to_string(),
             start_symbol,
             end_symbol,
-            ship.ship_type.to_string()
+            ship.model.to_string()
         );
         // Return
         Route {
@@ -109,9 +98,9 @@ impl Route {
 
 pub fn find_routes(
     minimum_profit_per_time: i32,
-    ships_for_sale: Vec<spacetraders::shared::ShipForSale>,
-    locs_info: HashMap<String, (String, String, i32, i32)>,
+    ships_for_sale: Vec<StarShip>,
     mut goods: HashMap<String, Vec<MarketGoodSummary>>,
+    staratlas: &StarAtlas,
 ) -> (HashMap<String, Route>, Vec<Route>) {
     let mut routes = Vec::<Route>::new();
     // Filter tradable goods by requiring at least one in-system pair buying/selling each good
@@ -121,7 +110,7 @@ pub fn find_routes(
     for (goodname, good) in goods {
         for endpoint_pair in good.into_iter().permutations(2) {
             for ship in &ships_for_sale {
-                ship_models.insert(ship.ship_type.to_string());
+                ship_models.insert(ship.model.to_string());
                 let restricted = ship
                     .restricted_goods
                     .as_ref()
@@ -134,9 +123,10 @@ pub fn find_routes(
                         &goodname,
                         ship,
                         restricted,
-                        &locs_info[&endpoint_pair[0].location_symbol],
-                        &locs_info[&endpoint_pair[1].location_symbol],
+                        &endpoint_pair[0].location_symbol.to_string(),
+                        &endpoint_pair[1].location_symbol.to_string(),
                         &endpoint_pair,
+                        staratlas.clone(),
                     );
                     routes.push(new_route);
                 }
