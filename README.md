@@ -20,3 +20,13 @@
 - - - As a part of refactoring to include travel time to route start for curated routes?
 - - - Curated routes should also be given for each ship in shipmanager not marked as 'scout'
 - - - Oh shipmanager should have a scout/marketwatcher list
+
+GameLoop:
+- update staratlas (needs to hold market data too)
+- update ship manager
+- loop through ship manager:
+- - any in scoutting are ignored
+- - any in inactive should have routes generated, assigned, and started
+- - - full routes, not routes_curated - those are for buying new ships
+- - - starting a route should spawn it into another tokio runtime
+- - any in active should be ignored

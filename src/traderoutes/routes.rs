@@ -99,10 +99,10 @@ impl Route {
 pub fn find_routes(
     minimum_profit_per_time: i32,
     ships_for_sale: Vec<StarShip>,
-    mut goods: HashMap<String, Vec<MarketGoodSummary>>,
     staratlas: &StarAtlas,
 ) -> (HashMap<String, Route>, Vec<Route>) {
     let mut routes = Vec::<Route>::new();
+    let mut goods = staratlas.goods.clone();
     // Filter tradable goods by requiring at least one in-system pair buying/selling each good
     goods.retain(|_, v| (*v).len() >= 2);
     let mut ship_models = HashSet::<String>::new();

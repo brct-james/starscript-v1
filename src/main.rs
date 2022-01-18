@@ -11,107 +11,6 @@ mod shared;
 use shared::StarShip;
 
 #[tokio::main]
-async fn get_systems_stuff(
-    client: &Client,
-) -> Result<(Vec<StarShip>, HashMap<String, Vec<MarketGoodSummary>>), Box<dyn std::error::Error>> {
-    let systems = client.get_systems_info().await?.systems;
-    let oe_locs = &systems
-        .clone()
-        .into_iter()
-        .filter(|sys| sys.symbol == "OE".to_string())
-        .collect::<Vec<spacetraders::shared::SystemsInfoData>>()[0]
-        .locations;
-    let oe_loc_symbols = oe_locs
-        .into_iter()
-        .map(|loc| &loc.symbol)
-        .collect::<Vec<&String>>();
-    let xv_locs = &systems
-        .clone()
-        .into_iter()
-        .filter(|sys| sys.symbol == "XV".to_string())
-        .collect::<Vec<spacetraders::shared::SystemsInfoData>>()[0]
-        .locations;
-    let xv_loc_symbols = xv_locs
-        .into_iter()
-        .map(|loc| &loc.symbol)
-        .collect::<Vec<&String>>();
-    let zy1_locs = &systems
-        .clone()
-        .into_iter()
-        .filter(|sys| sys.symbol == "ZY1".to_string())
-        .collect::<Vec<spacetraders::shared::SystemsInfoData>>()[0]
-        .locations;
-    let zy1_loc_symbols = zy1_locs
-        .into_iter()
-        .map(|loc| &loc.symbol)
-        .collect::<Vec<&String>>();
-    let na7_locs = &systems
-        .clone()
-        .into_iter()
-        .filter(|sys| sys.symbol == "NA7".to_string())
-        .collect::<Vec<spacetraders::shared::SystemsInfoData>>()[0]
-        .locations;
-    let na7_loc_symbols = na7_locs
-        .into_iter()
-        .map(|loc| &loc.symbol)
-        .collect::<Vec<&String>>();
-
-    let ships_for_sale_system = "OE".to_string();
-    let locations_symbols = Vec::<&String>::new()
-        .into_iter()
-        .chain(oe_loc_symbols.into_iter())
-        .chain(xv_loc_symbols.into_iter())
-        .chain(zy1_loc_symbols.into_iter())
-        .chain(na7_loc_symbols.into_iter())
-        .collect::<Vec<&String>>();
-
-    let mut mkt_symbols = HashMap::new();
-    let mut mkts = HashMap::new();
-    let loc_vec = locations_symbols;
-    for loc in loc_vec.iter() {
-        let mkt: Vec<spacetraders::shared::MarketplaceData>;
-        match client.get_location_marketplace(&loc.to_string()).await {
-            Ok(locmktplc) => mkt = locmktplc.marketplace,
-            Err(why) => {
-                println!(
-                    "Failed to get marketplace for loc: {}, for reason: {}",
-                    loc.to_string(),
-                    why
-                );
-                continue;
-            }
-        };
-
-        // Now append items to mkt_symbols
-        for item in mkt.iter() {
-            let item_data = MarketGoodSummary {
-                good_symbol: item.symbol.to_string(),
-                location_symbol: loc.clone().to_string(),
-                volume_per_unit: item.volume_per_unit,
-                purchase_price_per_unit: item.purchase_price_per_unit,
-                sell_price_per_unit: item.sell_price_per_unit,
-                quantity_available: item.quantity_available,
-            };
-            let entry = mkt_symbols
-                .entry(item.symbol.to_string())
-                .or_insert(Vec::<MarketGoodSummary>::new());
-            (*entry).push(item_data);
-        }
-
-        // Lastly append mkt to hashmap
-        mkts.insert(loc, mkt);
-    }
-    let ships_for_sale = client
-        .get_ships_for_sale(&ships_for_sale_system)
-        .await?
-        .ships
-        .iter()
-        .map(|s| StarShip::from(s.clone()))
-        .collect::<Vec<StarShip>>();
-    return Ok((ships_for_sale, mkt_symbols));
-}
-
-#[tokio::main]
 async fn update_shipmanager_with_api(
     client: &Client,
     mut shipmanager: shipmanager::ShipManager,
@@ -167,43 +66,143 @@ async fn setup_staratlas(
     client: &Client,
 ) -> Result<wayfinding::StarAtlas, Box<dyn std::error::Error>> {
     let mut staratlas = wayfinding::StarAtlas::new();
-    let oe_system_locations = client
-        .get_locations_in_system("OE".to_string())
-        .await?
-        .locations;
-    let xv_system_locations = client
-        .get_locations_in_system("XV".to_string())
-        .await?
-        .locations;
-    let zy1_system_locations = client
-        .get_locations_in_system("ZY1".to_string())
-        .await?
-        .locations;
-    let na7_system_locations = client
-        .get_locations_in_system("NA7".to_string())
-        .await?
-        .locations;
-    staratlas.add_system(
-        "OE".to_string(),
-        "Omicron Eridani".to_string(),
-        oe_system_locations,
-    );
-    staratlas.add_system("XV".to_string(), "Xiav".to_string(), xv_system_locations);
-    staratlas.add_system(
-        "ZY1".to_string(),
-        "Zeon Y1".to_string(),
-        zy1_system_locations,
-    );
-    staratlas.add_system(
-        "NA7".to_string(),
-        "Niri A7".to_string(),
-        na7_system_locations,
-    );
-    // println!(
-    //     "staratlas: {}",
-    //     serde_json::to_string_pretty(&staratlas).unwrap()
-    // );
+    // Get system info
+    let systems = client.get_systems_info().await?.systems;
+    for system in systems {
+        staratlas.add_system(&system.symbol, &system.name, &system.locations);
+        // Add marketplace data where available
+        for location in system.locations {
+            match client
+                .get_location_marketplace(&location.symbol.to_string())
+                .await
+            {
+                Ok(mkt) => {
+                    staratlas.update_starport_marketplace(
+                        &location.symbol,
+                        &Some(mkt.marketplace.clone()),
+                    );
+                    // Now append items to mkt_symbols
+                    // let mkt: Vec<spacetraders::shared::MarketplaceData>; (from get_location_marketplace - stored in staratlas)
+                    // inserted into mkts hashmap<symbol:String, market:...>
+                    for good in mkt.marketplace.iter() {
+                        let good_summary = MarketGoodSummary {
+                            good_symbol: good.symbol.to_string(),
+                            location_symbol: location.symbol.to_string(),
+                            volume_per_unit: good.volume_per_unit,
+                            purchase_price_per_unit: good.purchase_price_per_unit,
+                            sell_price_per_unit: good.sell_price_per_unit,
+                            quantity_available: good.quantity_available,
+                        };
+                        let entry = staratlas
+                            .goods
+                            .entry(good.symbol.to_string())
+                            .or_insert(Vec::<MarketGoodSummary>::new());
+                        (*entry).push(good_summary);
+                    }
+                }
+                Err(why) => {
+                    println!(
+                        "Failed to get marketplace for loc: {}, for reason: {}",
+                        location.symbol.to_string(),
+                        why
+                    );
+                    continue;
+                }
+            };
+        }
+    }
     return Ok(staratlas);
+}
+
+#[tokio::main]
+async fn get_ships_for_sale(
+    client: &Client,
+    system_symbol: &String,
+) -> Result<Vec<StarShip>, Box<dyn std::error::Error>> {
+    Ok(client
+        .get_ships_for_sale(&system_symbol)
+        .await?
+        .ships
+        .iter()
+        .map(|s| StarShip::from(s.clone()))
+        .collect::<Vec<StarShip>>())
+}
+
+fn _test_generate_way_from_symbols(
+    suite: &Vec<(String, String, Vec<String>)>,
+    starship: &StarShip,
+    staratlas: &wayfinding::StarAtlas,
+) -> Vec<(bool, Vec<String>)> {
+    let mut results = Vec::<(bool, Vec<String>)>::new();
+    for (start, end, assertion) in suite {
+        let way = wayfinding::generate_way_from_symbols(start, end, starship, staratlas);
+        let result = way
+            .legs
+            .iter()
+            .map(|l| format!("{} -> {}", l.start_symbol, l.end_symbol))
+            .collect::<Vec<String>>();
+        results.push((result == *assertion, result));
+    }
+    return results;
+}
+
+fn temp_tanker_loop(
+    tanker_route: Route,
+    tanker: shipmanager::ShipStatus,
+    staratlas: wayfinding::StarAtlas,
+    steps: Vec<traderoutes::steps::Step>,
+    client: Client,
+    mut shipmanager: shipmanager::ShipManager,
+) {
+    // Start Route
+    loop {
+        match update_shipmanager_with_api(&client, shipmanager) {
+            Ok(sm) => shipmanager = sm,
+            Err(why) => panic!("Error updating shipmanager: {}", why),
+        };
+        shipmanager.update_ship_step(&tanker.ship.id.as_ref().unwrap().to_string(), 0);
+        let (_, tanker) = shipmanager
+            .get_ship(&"ckyabccit124512315s6e0js9gn8".to_string())
+            .unwrap();
+        // TODO: unwrap will panic if in transit already!
+        if tanker.ship.location.is_some() {
+            break;
+        } else {
+            println!("Tanker traveling, waiting to start route");
+        }
+    }
+
+    // Run Route
+    loop {
+        match update_shipmanager_with_api(&client, shipmanager) {
+            Ok(sm) => shipmanager = sm,
+            Err(why) => panic!("Error updating shipmanager: {}", why),
+        };
+        shipmanager.save().unwrap();
+        let (_, tanker) = shipmanager
+            .get_ship(&"ckyabccit124512315s6e0js9gn8".to_string())
+            .unwrap();
+        match (steps[tanker.step.clone().unwrap()].run)(
+            &client.clone(),
+            &tanker.ship.clone(),
+            &staratlas.clone(),
+            &tanker_route.wayfinding.clone(),
+            &tanker_route.good.clone(),
+        ) {
+            Ok(delay) => {
+                thread::sleep(delay);
+                // println!("Pushing back");
+            }
+            Err(why) => panic!("An error occured while flying start: {}", why),
+        };
+
+        // Increment Ship Step
+        shipmanager.incr_ship_step(&tanker.ship.id.as_ref().unwrap().to_string());
+        if tanker.step.clone().unwrap() == steps.len() - 1 {
+            // Out of Steps, Route Complete
+            break;
+        }
+    }
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -218,15 +217,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "4be25691-9594-4595-8344-ae3078b4b9fa".to_string(),
         );
 
-        let (ships_for_sale, mkt_symbols);
-        match get_systems_stuff(&client) {
-            Ok((res1, res2)) => {
-                ships_for_sale = res1;
-                mkt_symbols = res2;
-            }
-            Err(why) => panic!("Error getting systems stuff: {}", why),
-        };
-
         let steps = generate_steps(vec![
             StepSymbol::TravelStart,
             StepSymbol::BuyGoods,
@@ -235,19 +225,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             StepSymbol::FinishRoute,
         ]);
 
-        let staratlas;
+        let mut staratlas;
         match setup_staratlas(&client) {
             Ok(res1) => {
                 staratlas = res1;
             }
             Err(why) => panic!("Error in setup_staratlas: {}", why),
         };
+        staratlas.save().unwrap();
+
+        let mut ships_for_sale = Vec::<StarShip>::new();
+        for (symbol, _) in &staratlas.systems {
+            match get_ships_for_sale(&client, &symbol) {
+                Ok(ships) => ships_for_sale.append(&mut ships.clone()),
+                Err(why) => panic!("Error getting ships for sale: {}", why),
+            }
+        }
 
         // Find Potential Routes
         // HashMap is curated routes where ship_type is key
         // Vec is top routes based on minimum_profit_per_time
-        let (curated_routes, _top_routes) =
-            find_routes(50i32, ships_for_sale, mkt_symbols, &staratlas);
+        let (curated_routes, _top_routes) = find_routes(50i32, ships_for_sale, &staratlas);
 
         // Take top route, schedule ship to complete once
 
@@ -459,84 +457,4 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     Ok(())
     // spacetraders::client::claim_username(client, "Greenitthe".to_string());
-}
-
-fn _test_generate_way_from_symbols(
-    suite: &Vec<(String, String, Vec<String>)>,
-    starship: &StarShip,
-    staratlas: &wayfinding::StarAtlas,
-) -> Vec<(bool, Vec<String>)> {
-    let mut results = Vec::<(bool, Vec<String>)>::new();
-    for (start, end, assertion) in suite {
-        let way = wayfinding::generate_way_from_symbols(start, end, starship, staratlas);
-        let result = way
-            .legs
-            .iter()
-            .map(|l| format!("{} -> {}", l.start_symbol, l.end_symbol))
-            .collect::<Vec<String>>();
-        results.push((result == *assertion, result));
-    }
-    return results;
-}
-
-fn temp_tanker_loop(
-    tanker_route: Route,
-    tanker: shipmanager::ShipStatus,
-    staratlas: wayfinding::StarAtlas,
-    steps: Vec<traderoutes::steps::Step>,
-    client: Client,
-    mut shipmanager: shipmanager::ShipManager,
-) {
-    // Start Route
-    loop {
-        match update_shipmanager_with_api(&client, shipmanager) {
-            Ok(sm) => shipmanager = sm,
-            Err(why) => panic!("Error updating shipmanager: {}", why),
-        };
-        shipmanager.update_ship_step(&tanker.ship.id.as_ref().unwrap().to_string(), 0);
-        let (_, tanker) = shipmanager
-            .get_ship(&"ckyabccit124512315s6e0js9gn8".to_string())
-            .unwrap();
-        // TODO: unwrap will panic if in transit already!
-        if tanker.ship.location.is_some() {
-            break;
-        } else {
-            println!("Tanker traveling, waiting to start route");
-        }
-    }
-
-    // Run Route
-    loop {
-        match update_shipmanager_with_api(&client, shipmanager) {
-            Ok(sm) => shipmanager = sm,
-            Err(why) => panic!("Error updating shipmanager: {}", why),
-        };
-        match shipmanager.save() {
-            Ok(_) => println!("Saved shipmanager to file"),
-            Err(why) => panic!("Couldnt save shipmanager due to error: {}", why),
-        };
-        let (_, tanker) = shipmanager
-            .get_ship(&"ckyabccit124512315s6e0js9gn8".to_string())
-            .unwrap();
-        match (steps[tanker.step.clone().unwrap()].run)(
-            &client.clone(),
-            &tanker.ship.clone(),
-            &staratlas.clone(),
-            &tanker_route.wayfinding.clone(),
-            &tanker_route.good.clone(),
-        ) {
-            Ok(delay) => {
-                thread::sleep(delay);
-                // println!("Pushing back");
-            }
-            Err(why) => panic!("An error occured while flying start: {}", why),
-        };
-
-        // Increment Ship Step
-        shipmanager.incr_ship_step(&tanker.ship.id.as_ref().unwrap().to_string());
-        if tanker.step.clone().unwrap() == steps.len() - 1 {
-            // Out of Steps, Route Complete
-            break;
-        }
-    }
 }

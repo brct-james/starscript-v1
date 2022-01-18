@@ -1,49 +1,104 @@
 use super::gamemath;
 use super::shared::StarShip;
+use super::traderoutes::routes::MarketGoodSummary;
 use std::collections::HashMap;
+
+pub fn get_system_symbol_from_location_symbol(location_symbol: &String) -> String {
+    return location_symbol.split("-").collect::<Vec<&str>>()[0].to_string();
+}
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 pub struct StarAtlas {
     pub systems: HashMap<String, StarSystem>,
+    pub goods: HashMap<String, Vec<MarketGoodSummary>>,
 }
 
 impl StarAtlas {
     pub fn new() -> StarAtlas {
         StarAtlas {
             systems: HashMap::<String, StarSystem>::new(),
+            goods: HashMap::<String, Vec<MarketGoodSummary>>::new(),
         }
     }
 
     pub fn add_system(
         &mut self,
-        symbol: String,
-        name: String,
-        locations: Vec<spacetraders::shared::Location>,
+        symbol: &String,
+        name: &String,
+        locations: &Vec<spacetraders::shared::SystemsInfoLocation>,
     ) -> &StarAtlas {
         self.systems.insert(
             symbol.to_string(),
             StarSystem {
-                symbol: symbol,
-                name: name,
+                symbol: symbol.to_string(),
+                name: name.to_string(),
                 locations: locations
+                    .clone()
                     .iter()
-                    .map(|l| (l.symbol.to_string(), l.clone()))
+                    .map(|l| {
+                        (
+                            l.symbol.to_string(),
+                            StarPort {
+                                location_info: l.clone(),
+                                marketplace: None,
+                            },
+                        )
+                    })
                     .collect(),
             },
         );
         return self;
     }
 
-    // pub fn add_location(&mut self) -> &StarAtlas {
-    //     return self;
-    // }
+    pub fn update_starport_marketplace(
+        &mut self,
+        location_symbol: &String,
+        marketplace_data: &Option<Vec<spacetraders::shared::MarketplaceData>>,
+    ) -> &StarAtlas {
+        self.systems
+            .get_mut(&get_system_symbol_from_location_symbol(location_symbol))
+            .unwrap()
+            .locations
+            .get_mut(location_symbol)
+            .unwrap()
+            .update_marketplace_data(marketplace_data.clone());
+        return self;
+    }
+
+    pub fn save(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        let f = std::fs::OpenOptions::new()
+            .truncate(true)
+            .write(true)
+            .create(true)
+            .open("staratlas.json")?;
+        // write to file with serde
+        serde_json::to_writer_pretty(f, &self)?;
+
+        Ok(())
+    }
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 pub struct StarSystem {
-    symbol: String,
-    name: String,
-    pub locations: HashMap<String, spacetraders::shared::Location>,
+    pub symbol: String,
+    pub name: String,
+    pub locations: HashMap<String, StarPort>,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
+pub struct StarPort {
+    pub location_info: spacetraders::shared::SystemsInfoLocation,
+    pub marketplace: Option<Vec<spacetraders::shared::MarketplaceData>>,
+    // TODO: add ships_for_sale
+}
+impl StarPort {
+    pub fn update_marketplace_data(
+        &mut self,
+        marketplace_data: Option<Vec<spacetraders::shared::MarketplaceData>>,
+    ) -> &StarPort {
+        self.marketplace = marketplace_data;
+        return self;
+    }
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Eq, Ord, PartialEq, PartialOrd)]
@@ -136,12 +191,16 @@ pub fn generate_leg_from_symbols(
     ship: &StarShip,
     staratlas: &StarAtlas,
 ) -> Leg {
-    let start_system_symbol = leg_dept_symbol.split("-").collect::<Vec<&str>>()[0].to_string();
-    let end_system_symbol = leg_dest_symbol.split("-").collect::<Vec<&str>>()[0].to_string();
+    let start_system_symbol = get_system_symbol_from_location_symbol(leg_dept_symbol);
+    let end_system_symbol = get_system_symbol_from_location_symbol(leg_dest_symbol);
     let start_system = staratlas.systems[&start_system_symbol].clone();
-    let start_loc = start_system.locations[&leg_dept_symbol.to_string()].clone();
+    let start_loc = start_system.locations[&leg_dept_symbol.to_string()]
+        .location_info
+        .clone();
     let end_system = staratlas.systems[&end_system_symbol].clone();
-    let end_loc = end_system.locations[&leg_dest_symbol.to_string()].clone();
+    let end_loc = end_system.locations[&leg_dest_symbol.to_string()]
+        .location_info
+        .clone();
     let start_symbol = leg_dept_symbol.to_string();
     let start_type = start_loc.location_type.to_string();
     let end_symbol = leg_dest_symbol.to_string();
@@ -206,13 +265,11 @@ pub fn generate_way_from_symbols(
     let mut leg_dest_symbol: String;
     let mut system_link_dept_index = temp_system_links
         .iter()
-        .position(|s| {
-            s.to_string() == start_symbol.split("-").collect::<Vec<&str>>()[0].to_string()
-        })
+        .position(|s| s.to_string() == get_system_symbol_from_location_symbol(start_symbol))
         .unwrap() as i32;
     let system_link_end_index = temp_system_links
         .iter()
-        .position(|s| s.to_string() == end_symbol.split("-").collect::<Vec<&str>>()[0].to_string())
+        .position(|s| s.to_string() == get_system_symbol_from_location_symbol(end_symbol))
         .unwrap() as i32;
     let travel_dir: i32 = if system_link_dept_index > system_link_end_index {
         -1
