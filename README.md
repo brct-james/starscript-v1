@@ -15,3 +15,8 @@
 - Combine Travel steps
 - Use returned ship info from PurchaseOrder to update shipmanager for free
 - - Same for errors that tell how long till action is done
+- Fix inefficiency described in wayfinding.rs comment
+- - Or refactor routes so starting route for a given ship always start at ship's current location
+- - - As a part of refactoring to include travel time to route start for curated routes?
+- - - Curated routes should also be given for each ship in shipmanager not marked as 'scout'
+- - - Oh shipmanager should have a scout/marketwatcher list

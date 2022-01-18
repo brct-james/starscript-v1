@@ -216,8 +216,10 @@ pub fn generate_way_from_symbols(
         .unwrap() as i32;
     let travel_dir: i32 = if system_link_dept_index > system_link_end_index {
         -1
-    } else {
+    } else if system_link_dept_index < system_link_end_index {
         1
+    } else {
+        0
     };
     if &start_symbol_components[0].to_string() == &end_symbol_components[0].to_string() {
         // In-system travel, only one leg
@@ -232,16 +234,32 @@ pub fn generate_way_from_symbols(
     // CHECK IF DONE ELSE LOOP TILL DONE
     let mut loop_index = 0usize;
     loop {
-        if leg_dest_symbol == start_symbol.to_string() {
-            // This Loop's Dest is Current Location - Increment Dest and Skip Loop
+        // Appears to be some inefficiency here - tries traveling OE-UC to OE-UC on route OE-UC -> OE-UC-AD for some reason... Make sure tests catch this, then fix
+        println!(
+            "leg_dest_symbol: {:#?}, start_symbol: {:#?}, ==?: {:#?}",
+            leg_dest_symbol,
+            start_symbol.to_string(),
+            leg_dest_symbol == start_symbol.to_string()
+        );
+        if loop_index == 0 && leg_dest_symbol == start_symbol.to_string() {
+            // This Loop's Dest is Current Location (Ship at Route Start) - Increment Dest and Skip Loop
             leg_dept_symbol = leg_dest_symbol;
             leg_dest_symbol = format!(
                 "{}-W-{}",
                 temp_system_links[(system_link_dept_index + travel_dir) as usize],
                 temp_system_links[system_link_dept_index as usize]
             );
-            // Increment System Link Departure Index by Travel Direction
-            system_link_dept_index += travel_dir;
+            if travel_dir == 0 {
+                // If dest is actually in this system, go to end instead
+                leg_dest_symbol = end_symbol.to_string();
+            } else {
+                // Increment System Link Departure Index by Travel Direction
+                system_link_dept_index += travel_dir;
+            }
+            println!(
+                "{:#?} {:#?} {:#?} {:#?}",
+                travel_dir, leg_dept_symbol, leg_dest_symbol, system_link_dept_index
+            );
             // Increment Loop Index
             loop_index += 1;
             continue;
@@ -253,12 +271,17 @@ pub fn generate_way_from_symbols(
         total_flight_time += leg.flight_time as f64;
         total_fuel_cost_to_end += leg.fuel_cost_to_end;
         legs.push(leg);
-
         if leg_dest_symbol == end_symbol.to_string() {
             // This Loop's Dest is End - No More Legs Needed - Break Loop
             break;
         }
-
+        // Debugging index out of bounds: the len is 4 but the index is 4 at 'temp_system_links[(system_link_dept_index + travel_dir) as usize]'
+        // Route:  OE-UC -> OE-UC-AD Leg: OE-UC -> OC-UC-AD
+        // Location: OE-UC
+        println!(
+            "{:#?} dept vs dest {:#?}: dept symb: {:#?}, dest symb: {:#?}",
+            system_link_dept_index, system_link_end_index, leg_dept_symbol, leg_dest_symbol
+        );
         // Set Up Next Loop
         if system_link_dept_index == system_link_end_index {
             // Next loop Dest is End - Set Up Last Leg

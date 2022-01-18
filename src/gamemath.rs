@@ -22,6 +22,10 @@ pub fn calculate_fuel_cost(distance: &f64, ship_type: &String, target_type: &Str
             _ => fuel += 2,
         }
     }
+    //TODO: actual math for this one...
+    if ship_type == "TD-MK-I" {
+        fuel += 10;
+    }
     return fuel;
 }
 

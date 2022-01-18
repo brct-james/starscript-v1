@@ -419,6 +419,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         //             .map(|s| s.to_string())
         //             .collect(),
         //     ),
+        // (
+        //         "OE-UC".to_string(),
+        //         "OE-UC-AD".to_string(),
+        //         ["OE-UC -> OE-UC-AD"]
+        //             .iter()
+        //             .map(|s| s.to_string())
+        //             .collect(),
+        //     ),
         // ];
         // let test_results = test_generate_way_from_symbols(
         //     &suite,
