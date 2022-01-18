@@ -511,6 +511,10 @@ fn temp_tanker_loop(
             Ok(sm) => shipmanager = sm,
             Err(why) => panic!("Error updating shipmanager: {}", why),
         };
+        match shipmanager.save() {
+            Ok(_) => println!("Saved shipmanager to file"),
+            Err(why) => panic!("Couldnt save shipmanager due to error: {}", why),
+        };
         let (_, tanker) = shipmanager
             .get_ship(&"ckyabccit124512315s6e0js9gn8".to_string())
             .unwrap();

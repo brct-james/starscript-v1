@@ -2,15 +2,35 @@ use super::shared::StarShip;
 use std::collections::HashMap;
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
+pub struct ShipStatus {
+    pub route: Option<String>,
+    pub step: Option<usize>,
+    pub ship: StarShip,
+}
+
+impl ShipStatus {
+    pub fn new(route: Option<String>, step: Option<usize>, ship: StarShip) -> ShipStatus {
+        let ship = ShipStatus {
+            route: route,
+            step: step,
+            ship: ship,
+        };
+        return ship;
+    }
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 pub enum ShipState {
     Active,
     Inactive,
+    Scouting,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 pub struct ShipManager {
     pub active: HashMap<String, ShipStatus>,
     pub inactive: HashMap<String, ShipStatus>,
+    pub scouting: HashMap<String, ShipStatus>,
 }
 
 impl ShipManager {
@@ -18,6 +38,7 @@ impl ShipManager {
         return ShipManager {
             active: HashMap::<String, ShipStatus>::new(),
             inactive: HashMap::<String, ShipStatus>::new(),
+            scouting: HashMap::<String, ShipStatus>::new(),
         };
     }
     // pub fn get_ships(&self, subset: Option<ShipState>) -> HashMap<String, ShipStatus> {
@@ -45,23 +66,35 @@ impl ShipManager {
         }
     }
 
-    pub fn add_ship(&mut self, ship_status: ShipStatus, is_active: bool) -> &mut ShipManager {
-        if is_active {
-            self.active.insert(
-                ship_status.ship.id.as_ref().unwrap().to_string(),
-                ship_status,
-            );
-        } else {
-            self.inactive.insert(
-                ship_status.ship.id.as_ref().unwrap().to_string(),
-                ship_status,
-            );
+    pub fn add_ship(&mut self, ship_status: ShipStatus, shipstate: ShipState) -> &mut ShipManager {
+        match shipstate {
+            ShipState::Active => {
+                self.active.insert(
+                    ship_status.ship.id.as_ref().unwrap().to_string(),
+                    ship_status,
+                );
+            }
+            ShipState::Inactive => {
+                self.inactive.insert(
+                    ship_status.ship.id.as_ref().unwrap().to_string(),
+                    ship_status,
+                );
+            }
+            ShipState::Scouting => {
+                self.scouting.insert(
+                    ship_status.ship.id.as_ref().unwrap().to_string(),
+                    ship_status,
+                );
+            }
         }
         return self;
     }
 
     pub fn add_new_ship_from_api(&mut self, ship: StarShip) -> &mut ShipManager {
-        self.add_ship(ShipStatus::new(None, None, ship.clone()), false);
+        self.add_ship(
+            ShipStatus::new(None, None, ship.clone()),
+            ShipState::Inactive,
+        );
         return self;
     }
 
@@ -70,9 +103,9 @@ impl ShipManager {
         ship: StarShip,
         route: Option<String>,
         step: Option<usize>,
-        is_active: bool,
+        shipstate: ShipState,
     ) -> &mut ShipManager {
-        self.add_ship(ShipStatus::new(route, step, ship), is_active);
+        self.add_ship(ShipStatus::new(route, step, ship), shipstate);
         return self;
     }
 
@@ -86,18 +119,11 @@ impl ShipManager {
     pub fn update_ships_from_api(&mut self, ships: Vec<StarShip>) -> &mut ShipManager {
         for ship in ships {
             match self.get_ship(&(ship.id.as_ref().unwrap())) {
-                Some((shipstate, shipstatus)) => match shipstate {
-                    ShipState::Active => {
-                        self.add_ship_from_api(ship, shipstatus.route, shipstatus.step, true);
-                    }
-                    ShipState::Inactive => {
-                        self.add_ship_from_api(ship, shipstatus.route, shipstatus.step, false);
-                    }
-                },
-                None => {
-                    self.add_new_ship_from_api(ship);
+                Some((shipstate, shipstatus)) => {
+                    self.add_ship_from_api(ship, shipstatus.route, shipstatus.step, shipstate)
                 }
-            }
+                None => self.add_new_ship_from_api(ship),
+            };
         }
         return self;
     }
@@ -177,17 +203,17 @@ impl ShipManager {
     //     return self
     // }
 
-    // pub fn save(shipmanager: &ShipManager) -> Result<(), Box<dyn std::error::Error>> {
-    //     let f = std::fs::OpenOptions::new()
-    //         .truncate(true)
-    //         .write(true)
-    //         .create(true)
-    //         .open("shipmanager.json")?;
-    //     // write to file with serde
-    //     serde_json::to_writer_pretty(f, &shipmanager)?;
+    pub fn save(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        let f = std::fs::OpenOptions::new()
+            .truncate(true)
+            .write(true)
+            .create(true)
+            .open("shipmanager.json")?;
+        // write to file with serde
+        serde_json::to_writer_pretty(f, &self)?;
 
-    //     Ok(())
-    // }
+        Ok(())
+    }
 
     // pub fn load() -> Result<Todo, std::io::Error> {
     //     // open db.json
@@ -205,22 +231,4 @@ impl ShipManager {
     //         Err(e) => panic!("An error occurred: {}", e),
     //     }
     // }
-}
-
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
-pub struct ShipStatus {
-    pub route: Option<String>,
-    pub step: Option<usize>,
-    pub ship: StarShip,
-}
-
-impl ShipStatus {
-    pub fn new(route: Option<String>, step: Option<usize>, ship: StarShip) -> ShipStatus {
-        let ship = ShipStatus {
-            route: route,
-            step: step,
-            ship: ship,
-        };
-        return ship;
-    }
 }
