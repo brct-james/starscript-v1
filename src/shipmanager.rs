@@ -1,15 +1,16 @@
 use super::shared::StarShip;
+use super::traderoutes::routes::Route;
 use std::collections::HashMap;
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 pub struct ShipStatus {
-    pub route: Option<String>,
+    pub route: Option<Route>,
     pub step: Option<usize>,
     pub ship: StarShip,
 }
 
 impl ShipStatus {
-    pub fn new(route: Option<String>, step: Option<usize>, ship: StarShip) -> ShipStatus {
+    pub fn new(route: Option<Route>, step: Option<usize>, ship: StarShip) -> ShipStatus {
         let ship = ShipStatus {
             route: route,
             step: step,
@@ -91,17 +92,27 @@ impl ShipManager {
     }
 
     pub fn add_new_ship_from_api(&mut self, ship: StarShip) -> &mut ShipManager {
-        self.add_ship(
-            ShipStatus::new(None, None, ship.clone()),
-            ShipState::Inactive,
-        );
+        match ship.model.as_str() {
+            "JW-MK-I" => self.add_ship(
+                ShipStatus::new(None, None, ship.clone()),
+                ShipState::Scouting,
+            ),
+            "HM-MK-I" => self.add_ship(
+                ShipStatus::new(None, None, ship.clone()),
+                ShipState::Scouting,
+            ),
+            _ => self.add_ship(
+                ShipStatus::new(None, None, ship.clone()),
+                ShipState::Inactive,
+            ),
+        };
         return self;
     }
 
     pub fn add_ship_from_api(
         &mut self,
         ship: StarShip,
-        route: Option<String>,
+        route: Option<Route>,
         step: Option<usize>,
         shipstate: ShipState,
     ) -> &mut ShipManager {
@@ -155,7 +166,7 @@ impl ShipManager {
     //     return self;
     // }
 
-    pub fn update_ship_step(&mut self, id: &String, new_step: usize) -> &mut ShipManager {
+    pub fn _update_ship_step(&mut self, id: &String, new_step: usize) -> &mut ShipManager {
         if self.active.contains_key(&id.to_string()) {
             self.active
                 .entry(id.to_string())
@@ -175,21 +186,21 @@ impl ShipManager {
     pub fn update_ship_route_and_step(
         &mut self,
         id: &String,
-        new_route: &String,
+        new_route: &Route,
         new_step: usize,
     ) -> &mut ShipManager {
         if self.inactive.contains_key(&id.to_string()) {
             self.inactive.entry(id.to_string()).and_modify(|e| {
                 e.step = Some(new_step);
-                e.route = Some(new_route.to_string());
+                e.route = Some(new_route.clone());
             });
         }
         return self;
     }
 
-    pub fn start_route(&mut self, id: &String, route_name: &String) -> &ShipManager {
+    pub fn start_route(&mut self, id: &String, route: &Route) -> &ShipManager {
         return self
-            .update_ship_route_and_step(id, route_name, 0usize)
+            .update_ship_route_and_step(id, route, 0usize)
             .activate_ship(id);
     }
 

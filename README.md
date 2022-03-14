@@ -22,8 +22,10 @@
 - - - Oh shipmanager should have a scout/marketwatcher list
 
 GameLoop:
-- update staratlas (needs to hold market data too)
 - update ship manager
+- update staratlas (needs to hold market data too)
+- - convert to use ships to decide where to pull market data from
+- update ships for sale (eventually move to star atlas as well)
 - loop through ship manager:
 - - any in scoutting are ignored
 - - any in inactive should have routes generated, assigned, and started

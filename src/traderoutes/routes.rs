@@ -32,7 +32,6 @@ pub struct RouteShipInfo {
     pub speed: i32,
     pub load_speed: i32,
     pub cargo_size: i32,
-    pub cargo_restrictions: Vec<String>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Eq, Ord, PartialEq, PartialOrd)]
@@ -40,7 +39,7 @@ pub struct Route {
     pub name: String,
     pub good: String,
     pub financials: RouteFinancials,
-    pub wayfinding: Way,
+    pub way: Way,
     pub ship_info: RouteShipInfo,
 }
 
@@ -48,7 +47,6 @@ impl Route {
     pub fn new(
         good: &String,
         ship: &StarShip,
-        restricted_goods_string: Vec<String>,
         start_symbol: &String,
         end_symbol: &String,
         goods_summary: &Vec<MarketGoodSummary>,
@@ -59,7 +57,6 @@ impl Route {
             speed: ship.speed.clone(),
             load_speed: ship.loading_speed.clone(),
             cargo_size: ship.max_cargo,
-            cargo_restrictions: restricted_goods_string,
         };
         let wayfinding = generate_way_from_symbols(&start_symbol, &end_symbol, &ship, &staratlas);
         let price_delta_per_unit =
@@ -90,9 +87,54 @@ impl Route {
             name: name,
             good: good.to_string(),
             ship_info: ship_info,
-            wayfinding: wayfinding,
+            way: wayfinding,
             financials: financials,
         }
+    }
+}
+
+pub fn generate_routes_for_ship_and_pick_best_if_meets_minimum_profit_per_time(
+    minimum_profit_per_time: i32,
+    ship: &StarShip,
+    staratlas: &StarAtlas,
+) -> Option<Route> {
+    let mut routes = Vec::<Route>::new();
+    let mut goods = staratlas.goods.clone();
+    // Get Vec<String> of restricted goods
+    let restricted = ship
+        .restricted_goods
+        .as_ref()
+        .unwrap_or(&Vec::<::spacetraders::shared::Good>::new())
+        .iter()
+        .map(|&r| r.to_string())
+        .collect::<Vec<String>>();
+    // Filter tradable goods by requiring at least one pair buying/selling each good and in restricted list if restricted
+    goods.retain(|k, v| (*v).len() >= 2 && (restricted.len() == 0 || restricted.contains(k)));
+    // Collect all start/end permutations for remaining goods
+    for (goodname, good) in goods {
+        for endpoint_pair in good.into_iter().permutations(2) {
+            let new_route = Route::new(
+                &goodname,
+                ship,
+                &endpoint_pair[0].location_symbol.to_string(),
+                &endpoint_pair[1].location_symbol.to_string(),
+                &endpoint_pair,
+                staratlas.clone(),
+            );
+            routes.push(new_route);
+        }
+    }
+    // Rank routes by best w.r.t. credits/time
+    let ranked_routes = rank_routes(routes);
+
+    // Get top routes regardless of ship type
+    let routes_top = filter_routes(ranked_routes.clone(), minimum_profit_per_time);
+
+    if routes_top.len() == 0 {
+        // None meet profit requirements
+        return None;
+    } else {
+        return Some(routes_top[0].clone());
     }
 }
 
@@ -122,7 +164,6 @@ pub fn find_routes(
                     let new_route = Route::new(
                         &goodname,
                         ship,
-                        restricted,
                         &endpoint_pair[0].location_symbol.to_string(),
                         &endpoint_pair[1].location_symbol.to_string(),
                         &endpoint_pair,

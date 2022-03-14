@@ -1,7 +1,8 @@
 use spacetraders::client::Client;
-use std::{thread, time};
+use std::time;
 
 use super::super::shared::StarShip;
+use super::super::shipmanager::ShipStatus;
 use super::super::wayfinding::{generate_way_from_ship_to_way_start, Leg, StarAtlas, Way};
 
 #[derive(
@@ -21,50 +22,57 @@ pub enum StepSymbol {
     SellGoods,
     TravelStart,
     TravelEnd,
-    FinishRoute,
     Done,
 }
 
+#[derive(Clone)]
 pub struct Step {
     pub step_symbol: StepSymbol,
     pub step_name: String,
     pub next_step_symbol: StepSymbol,
-    pub run: fn(
-        client: &Client,
-        ship: &StarShip,
-        staratlas: &StarAtlas,
-        way: &Way,
-        good: &String,
-    ) -> Result<time::Duration, Box<dyn std::error::Error>>,
 }
 
 impl Step {
-    pub fn new(
-        step_symbol: StepSymbol,
-        next_step_symbol: StepSymbol,
-        run_func: fn(
-            client: &Client,
-            ship: &StarShip,
-            staratlas: &StarAtlas,
-            way: &Way,
-            good: &String,
-        ) -> Result<time::Duration, Box<dyn std::error::Error>>,
-    ) -> Step {
+    pub fn new(step_symbol: StepSymbol, next_step_symbol: StepSymbol) -> Step {
         return Step {
             step_name: step_symbol.to_string(),
             step_symbol: step_symbol,
             next_step_symbol: next_step_symbol,
-            run: run_func,
         };
+    }
+    pub async fn run(
+        &self,
+        client: &Client,
+        ship_status: &ShipStatus,
+        staratlas: &StarAtlas,
+    ) -> Result<time::Duration, Box<dyn std::error::Error>> {
+        match self.step_symbol {
+            StepSymbol::BuyGoods => {
+                return buy_goods(client, ship_status, staratlas).await;
+            }
+            StepSymbol::SellGoods => {
+                return sell_goods(client, ship_status, staratlas).await;
+            }
+            StepSymbol::TravelStart => {
+                return travel_start(client, ship_status, staratlas).await;
+            }
+            StepSymbol::TravelEnd => {
+                return travel_end(client, ship_status, staratlas).await;
+            }
+            _ => panic!(
+                "Nonsensical StepSymbol received for step::run(): {}",
+                self.step_symbol
+            ),
+        }
     }
 }
 
-async fn buy_fuel(
-    client: &Client,
-    ship: &StarShip,
-    leg: &Leg,
-) -> Result<time::Duration, Box<dyn std::error::Error>> {
+async fn buy_fuel(client: &Client, ship: &StarShip, leg: &Leg) {
     let fuel_needed = leg.fuel_cost_to_end;
+    if fuel_needed == 0i32 {
+        println!("BuyFuel - have enough fuel");
+        return;
+    }
     let filtered_cargo = ship
         .cargo
         .as_ref()
@@ -75,67 +83,74 @@ async fn buy_fuel(
     let owned_fuel: i32;
     if filtered_cargo.len() > 0 {
         owned_fuel = filtered_cargo[0].quantity;
-        if owned_fuel > fuel_needed {
+        if owned_fuel >= fuel_needed {
             println!("BuyFuel - have enough fuel");
-            return Ok(time::Duration::from_secs(1));
+            return;
         }
+    } else {
+        owned_fuel = 0i32;
     }
-    loop {
+    let units_to_buy = fuel_needed - owned_fuel;
+    let multiples_of_loading_speed =
+        (units_to_buy as f64 / (ship.loading_speed - 1) as f64).floor() as i32;
+    let remainder = (units_to_buy % (ship.loading_speed - 1)) as i32;
+    let mut orders: Vec<i32> = vec![ship.loading_speed - 1; multiples_of_loading_speed as usize];
+    orders.push(remainder);
+    println!("{:#?}", orders);
+    for order in orders {
+        if order == 0i32 {
+            println!("BuyFuel");
+            return;
+        }
         match client
             .create_purchase_order(
                 ship.id.as_ref().unwrap().to_string(),
                 spacetraders::shared::Good::Fuel,
-                fuel_needed,
+                order,
             )
             .await
         {
             Ok(_purchase_order) => {
                 // println!("PO Opened: {:#?}", purchase_order);
-                break;
+                tokio::time::sleep(time::Duration::from_millis(500)).await; // Wait half second to avoid ratelimit
             }
             Err(why) => match why {
                 spacetraders::errors::SpaceTradersClientError::ApiError(e) => {
                     if e.error.code == 400i32 {
-                        // In transit - wait a few seconds
-                        thread::sleep(time::Duration::from_secs(5));
-                        println!("In Transit - Retrying Buy Fuel");
+                        // In Transit - TODO: Handle better
+                        panic!("Ship In Transit");
                     } else {
-                        panic!("ApiError while buying fuel: {}", e);
+                        panic!("ApiError while buying goods: {}", e);
                     }
                 }
-                _ => panic!("Error while buying fuel: {}", why),
+                _ => panic!("Error while buying goods: {}", why),
             },
         };
     }
 
     println!("BuyFuel");
-    return Ok(time::Duration::from_secs(1));
+    return;
 }
 
-#[tokio::main]
 async fn buy_goods(
     client: &Client,
-    ship: &StarShip,
+    ship_status: &ShipStatus,
     staratlas: &StarAtlas,
-    way: &Way,
-    good: &String,
 ) -> Result<time::Duration, Box<dyn std::error::Error>> {
-    let _ = client;
-    let _ = ship;
     let _ = staratlas;
-    let _ = way;
-    let _ = good;
-    let cargo_room = ship.space_available.unwrap();
-    let apigood = spacetraders::shared::Good::from(good.to_string());
+    let cargo_room = ship_status.ship.space_available.unwrap();
+    let apigood =
+        spacetraders::shared::Good::from(ship_status.route.as_ref().unwrap().good.to_string());
     let units_to_buy = cargo_room / apigood.get_volume();
     if units_to_buy == 0 {
         println!("BuyGoods - full cargo bay, skipping purchase");
         return Ok(time::Duration::from_secs(1));
     }
     let multiples_of_loading_speed =
-        (units_to_buy as f64 / ship.loading_speed as f64).floor() as i32;
-    let remainder = (units_to_buy % ship.loading_speed) as i32;
-    let mut orders: Vec<i32> = vec![ship.loading_speed; multiples_of_loading_speed as usize];
+        (units_to_buy as f64 / (ship_status.ship.loading_speed - 1) as f64).floor() as i32;
+    let remainder = (units_to_buy % (ship_status.ship.loading_speed - 1)) as i32;
+    let mut orders: Vec<i32> =
+        vec![ship_status.ship.loading_speed - 1; multiples_of_loading_speed as usize];
     orders.push(remainder);
     println!("{:#?}", orders);
     for order in orders {
@@ -144,20 +159,22 @@ async fn buy_goods(
             return Ok(time::Duration::from_secs(1));
         }
         match client
-            .create_purchase_order(ship.id.as_ref().unwrap().to_string(), apigood, order)
+            .create_purchase_order(
+                ship_status.ship.id.as_ref().unwrap().to_string(),
+                apigood,
+                order,
+            )
             .await
         {
             Ok(_purchase_order) => {
                 // println!("PO Opened: {:#?}", purchase_order);
-                thread::sleep(time::Duration::from_millis(500)); // Wait half second to avoid ratelimit
+                tokio::time::sleep(time::Duration::from_millis(500)).await; // Wait half second to avoid ratelimit
             }
             Err(why) => match why {
                 spacetraders::errors::SpaceTradersClientError::ApiError(e) => {
                     if e.error.code == 400i32 {
-                        // In transit - wait a few seconds
-                        thread::sleep(time::Duration::from_secs(5));
-                        println!("In Transit - Retrying Buy Goods in 5s");
-                        return buy_goods(client, ship, staratlas, way, good);
+                        // In Transit - TODO: Handle better
+                        panic!("Ship In Transit");
                     } else {
                         panic!("ApiError while buying goods: {}", e);
                     }
@@ -169,20 +186,18 @@ async fn buy_goods(
     println!("BuyGoods");
     return Ok(time::Duration::from_secs(1));
 }
-#[tokio::main]
+
 async fn sell_goods(
     client: &Client,
-    ship: &StarShip,
+    ship_status: &ShipStatus,
     staratlas: &StarAtlas,
-    way: &Way,
-    good: &String,
 ) -> Result<time::Duration, Box<dyn std::error::Error>> {
-    let _ = client;
-    let _ = ship;
     let _ = staratlas;
-    let _ = way;
-    let apigood = spacetraders::shared::Good::from(good.to_string());
-    let mut units_to_sell = ship
+    let way = &ship_status.route.as_ref().unwrap().way;
+    let apigood =
+        spacetraders::shared::Good::from(ship_status.route.as_ref().unwrap().good.to_string());
+    let mut units_to_sell = ship_status
+        .ship
         .cargo
         .as_ref()
         .unwrap()
@@ -191,7 +206,7 @@ async fn sell_goods(
         .collect::<Vec<&spacetraders::shared::Cargo>>()[0]
         .quantity;
     println!("UNITS TO SELL {:#?}", units_to_sell);
-    if ship.model == "TD-MK-I" {
+    if ship_status.ship.model == "TD-MK-I" {
         units_to_sell -= way.total_fuel_cost_to_end + 1;
     }
     println!("UNITS TO SELL {:#?}", units_to_sell);
@@ -200,9 +215,10 @@ async fn sell_goods(
         return Ok(time::Duration::from_secs(1));
     }
     let multiples_of_loading_speed =
-        (units_to_sell as f64 / ship.loading_speed as f64).floor() as i32;
-    let remainder = (units_to_sell % ship.loading_speed) as i32;
-    let mut orders: Vec<i32> = vec![ship.loading_speed; multiples_of_loading_speed as usize];
+        (units_to_sell as f64 / (ship_status.ship.loading_speed - 1) as f64).floor() as i32;
+    let remainder = (units_to_sell % (ship_status.ship.loading_speed - 1)) as i32;
+    let mut orders: Vec<i32> =
+        vec![ship_status.ship.loading_speed - 1; multiples_of_loading_speed as usize];
     orders.push(remainder);
     println!("{:#?}", orders);
     for order in orders {
@@ -211,20 +227,22 @@ async fn sell_goods(
             return Ok(time::Duration::from_secs(1));
         }
         match client
-            .create_sell_order(ship.id.as_ref().unwrap().to_string(), apigood, order)
+            .create_sell_order(
+                ship_status.ship.id.as_ref().unwrap().to_string(),
+                apigood,
+                order,
+            )
             .await
         {
             Ok(sale_order) => {
                 println!("SO Opened: {:#?}", sale_order);
-                thread::sleep(time::Duration::from_millis(500)); // Wait half second to avoid ratelimit
+                tokio::time::sleep(time::Duration::from_millis(500)).await; // Wait half second to avoid ratelimit
             }
             Err(why) => match why {
                 spacetraders::errors::SpaceTradersClientError::ApiError(e) => {
                     if e.error.code == 400i32 {
-                        // In transit - wait a few seconds
-                        thread::sleep(time::Duration::from_secs(5));
-                        println!("In Transit - Retrying Sell Goods in 5s");
-                        return sell_goods(client, ship, staratlas, way, good);
+                        // In Transit - TODO: Handle better
+                        panic!("Ship In Transit");
                     } else {
                         panic!("ApiError while selling goods: {}", e);
                     }
@@ -240,18 +258,13 @@ async fn sell_goods(
 async fn travel(
     client: &Client,
     ship: &StarShip,
-    mut way: Way,
+    way: &mut Way,
 ) -> Result<time::Duration, Box<dyn std::error::Error>> {
     let mut delay_time: u64 = 0;
     loop {
         let leg = way.legs[way.current_leg_index].clone();
         println!("Travel: Leg: {} -> {}", leg.start_symbol, leg.end_symbol);
-        match buy_fuel(client, ship, &leg).await {
-            Ok(delay) => {
-                thread::sleep(delay);
-            }
-            Err(why) => panic!("An error occurred while buying fuel: {}", why),
-        };
+        buy_fuel(client, ship, &leg).await;
         if leg.start_symbol == leg.end_symbol {
             // At start already, skip
             println!("Travel Skipped - Already at destination");
@@ -265,6 +278,7 @@ async fn travel(
         }
         delay_time = leg.flight_time.clone() as u64 + 1u64;
         if leg.is_warp {
+            println!("{:#?} Leg is warp, attempting!", ship.id);
             match client
                 .attempt_warp_jump(ship.id.as_ref().unwrap().to_string())
                 .await
@@ -274,7 +288,7 @@ async fn travel(
                     // Increment Leg Index
                     way.incr_leg();
                     // Sleep till FP should be done
-                    thread::sleep(time::Duration::from_secs(delay_time));
+                    tokio::time::sleep(time::Duration::from_secs(delay_time)).await;
                 }
                 Err(why) => match why {
                     spacetraders::errors::SpaceTradersClientError::ApiError(e) => {
@@ -298,6 +312,7 @@ async fn travel(
                 },
             };
         } else {
+            println!("{:#?} Leg is flight, attempting!", ship.id);
             match client
                 .create_flight_plan(
                     ship.id.as_ref().unwrap().to_string(),
@@ -310,7 +325,7 @@ async fn travel(
                     // Increment Leg Index
                     way.incr_leg();
                     // Sleep till FP should be done
-                    thread::sleep(time::Duration::from_secs(delay_time));
+                    tokio::time::sleep(time::Duration::from_secs(delay_time)).await;
                 }
                 Err(why) => match why {
                     spacetraders::errors::SpaceTradersClientError::ApiError(e) => {
@@ -342,26 +357,20 @@ async fn travel(
     return Ok(time::Duration::from_secs(delay_time));
 }
 
-#[tokio::main]
 async fn travel_start(
     client: &Client,
-    ship: &StarShip,
+    ship_status: &ShipStatus,
     staratlas: &StarAtlas,
-    way: &Way,
-    good: &String,
 ) -> Result<time::Duration, Box<dyn std::error::Error>> {
-    let _ = client;
-    let _ = ship;
-    let _ = staratlas;
-    let _ = good;
-    let way_to_start = generate_way_from_ship_to_way_start(&way, &ship, &staratlas);
+    let way = &ship_status.route.as_ref().unwrap().way;
+    let way_to_start = generate_way_from_ship_to_way_start(&way, &ship_status.ship, &staratlas);
     println!(
         "Travel Start: {} -> {}",
         way_to_start.start_symbol, way_to_start.end_symbol
     );
 
     let delay_duration: time::Duration;
-    match travel(client, ship, way_to_start.clone()).await {
+    match travel(client, &ship_status.ship, &mut way_to_start.clone()).await {
         Ok(dt) => delay_duration = dt,
         Err(why) => panic!("Err in travel: {}", why),
     };
@@ -369,42 +378,21 @@ async fn travel_start(
     return Ok(delay_duration);
 }
 
-#[tokio::main]
 async fn travel_end(
     client: &Client,
-    ship: &StarShip,
+    ship_status: &ShipStatus,
     staratlas: &StarAtlas,
-    way: &Way,
-    good: &String,
 ) -> Result<time::Duration, Box<dyn std::error::Error>> {
-    let _ = client;
-    let _ = ship;
     let _ = staratlas;
-    let _ = way;
-    let _ = good;
+    let way = &ship_status.route.as_ref().unwrap().way;
     println!("Travel End: {} -> {}", way.start_symbol, way.end_symbol);
     let delay_duration: time::Duration;
-    match travel(client, ship, way.clone()).await {
+    match travel(client, &ship_status.ship, &mut way.clone()).await {
         Ok(dt) => delay_duration = dt,
         Err(why) => panic!("Err in travel: {}", why),
     };
     println!("TravelEnd");
     return Ok(delay_duration);
-}
-fn finish_route(
-    client: &Client,
-    ship: &StarShip,
-    staratlas: &StarAtlas,
-    way: &Way,
-    good: &String,
-) -> Result<time::Duration, Box<dyn std::error::Error>> {
-    let _ = client;
-    let _ = ship;
-    let _ = staratlas;
-    let _ = way;
-    let _ = good;
-    println!("FinishRoute");
-    return Ok(time::Duration::from_secs(1));
 }
 
 pub fn generate_steps(step_list: Vec<StepSymbol>) -> Vec<Step> {
@@ -417,21 +405,10 @@ pub fn generate_steps(step_list: Vec<StepSymbol>) -> Vec<Step> {
             next_step = step_list[i + 1].clone();
         }
         match step {
-            StepSymbol::BuyGoods => {
-                steps.push(Step::new(StepSymbol::BuyGoods, next_step, buy_goods))
-            }
-            StepSymbol::SellGoods => {
-                steps.push(Step::new(StepSymbol::SellGoods, next_step, sell_goods))
-            }
-            StepSymbol::TravelStart => {
-                steps.push(Step::new(StepSymbol::TravelStart, next_step, travel_start))
-            }
-            StepSymbol::TravelEnd => {
-                steps.push(Step::new(StepSymbol::TravelEnd, next_step, travel_end))
-            }
-            StepSymbol::FinishRoute => {
-                steps.push(Step::new(StepSymbol::FinishRoute, next_step, finish_route))
-            }
+            StepSymbol::BuyGoods => steps.push(Step::new(StepSymbol::BuyGoods, next_step)),
+            StepSymbol::SellGoods => steps.push(Step::new(StepSymbol::SellGoods, next_step)),
+            StepSymbol::TravelStart => steps.push(Step::new(StepSymbol::TravelStart, next_step)),
+            StepSymbol::TravelEnd => steps.push(Step::new(StepSymbol::TravelEnd, next_step)),
             _ => panic!(
                 "Attempted to generate nonsensical step: {}",
                 step.to_string()

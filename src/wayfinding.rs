@@ -292,12 +292,12 @@ pub fn generate_way_from_symbols(
     let mut loop_index = 0usize;
     loop {
         // Appears to be some inefficiency here - tries traveling OE-UC to OE-UC on route OE-UC -> OE-UC-AD for some reason... Make sure tests catch this, then fix
-        println!(
-            "leg_dest_symbol: {:#?}, start_symbol: {:#?}, ==?: {:#?}",
-            leg_dest_symbol,
-            start_symbol.to_string(),
-            leg_dest_symbol == start_symbol.to_string()
-        );
+        // println!(
+        //     "leg_dest_symbol: {:#?}, start_symbol: {:#?}, ==?: {:#?}",
+        //     leg_dest_symbol,
+        //     start_symbol.to_string(),
+        //     leg_dest_symbol == start_symbol.to_string()
+        // );
         if loop_index == 0 && leg_dest_symbol == start_symbol.to_string() {
             // This Loop's Dest is Current Location (Ship at Route Start) - Increment Dest and Skip Loop
             leg_dept_symbol = leg_dest_symbol;
@@ -313,10 +313,10 @@ pub fn generate_way_from_symbols(
                 // Increment System Link Departure Index by Travel Direction
                 system_link_dept_index += travel_dir;
             }
-            println!(
-                "{:#?} {:#?} {:#?} {:#?}",
-                travel_dir, leg_dept_symbol, leg_dest_symbol, system_link_dept_index
-            );
+            // println!(
+            //     "{:#?} {:#?} {:#?} {:#?}",
+            //     travel_dir, leg_dept_symbol, leg_dest_symbol, system_link_dept_index
+            // );
             // Increment Loop Index
             loop_index += 1;
             continue;
@@ -335,10 +335,10 @@ pub fn generate_way_from_symbols(
         // Debugging index out of bounds: the len is 4 but the index is 4 at 'temp_system_links[(system_link_dept_index + travel_dir) as usize]'
         // Route:  OE-UC -> OE-UC-AD Leg: OE-UC -> OC-UC-AD
         // Location: OE-UC
-        println!(
-            "{:#?} dept vs dest {:#?}: dept symb: {:#?}, dest symb: {:#?}",
-            system_link_dept_index, system_link_end_index, leg_dept_symbol, leg_dest_symbol
-        );
+        // println!(
+        //     "{:#?} dept vs dest {:#?}: dept symb: {:#?}, dest symb: {:#?}",
+        //     system_link_dept_index, system_link_end_index, leg_dept_symbol, leg_dest_symbol
+        // );
         // Set Up Next Loop
         if system_link_dept_index == system_link_end_index {
             // Next loop Dest is End - Set Up Last Leg
