@@ -18,3 +18,26 @@ const distance = FlightPlan.calculateDistance(ship.location.x, ship.location.y, 
       const dockingCost = (hasUndockingCost ? ship.type.dockingEfficiency : 0) + 1
       const fuelCost = FlightPlan.calculateFuelCost(distance, ship.type.fuelEfficiency) + dockingCost
 ```
+
+And travel time:
+
+```
+const SYSTEM_SCALE = 3
+public static calculateArrival = (distance: number, speed: number) => {
+    const seconds = (distance * SYSTEM_SCALE) / speed
+
+    return moment()
+      .add(seconds + 30, 'seconds')
+      .toDate()
+  }
+```
+
+Distance calc:
+```
+public static calculateDistance = (fromX: number, fromY: number, toX: number, toY: number) => {
+    const from = new Flatten.Point(fromX, fromY)
+    const to = new Flatten.Point(toX, toY)
+
+    return Math.round(from.distanceTo(to)[0])
+  }
+```
